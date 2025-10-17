@@ -6,7 +6,7 @@ import type {
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
-import { NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { CosmosClient } from '@azure/cosmos';
 
 export class HkuCosmosDbNode implements INodeType {
@@ -21,15 +21,15 @@ export class HkuCosmosDbNode implements INodeType {
 			name: 'HKU Cosmos DB (Boaz)',
 		},
 		inputs: [
-			'main',
+			NodeConnectionTypes.Main,
 			{
 				displayName: 'Embedding',
-				maxConnections: 1,
-				type: 'ai_embedding',
+				type: NodeConnectionTypes.AiEmbedding,
 				required: false,
+				maxConnections: 1,
 			},
 		],
-		outputs: ['main'],
+		outputs: [NodeConnectionTypes.Main],
 		usableAsTool: true,
 		credentials: [
 			{
@@ -166,7 +166,7 @@ export class HkuCosmosDbNode implements INodeType {
 				displayName: 'Fields to Exclude',
 				name: 'fieldsToExclude',
 				type: 'string',
-				default: '',
+				default: 'vector,text',
 				placeholder: 'field1,field2,field3',
 				description: 'Comma-separated list of field names to exclude from results',
 				displayOptions: {
@@ -234,6 +234,49 @@ export class HkuCosmosDbNode implements INodeType {
 				},
 			},
 			{
+				displayName: 'Add Text',
+				name: 'addText',
+				type: 'boolean',
+				default: false,
+				description: 'Whether to add a text field to the document',
+				displayOptions: {
+					show: {
+						operation: ['upsert'],
+					},
+				},
+			},
+			{
+				displayName: 'Text Field Name',
+				name: 'textFieldName',
+				type: 'string',
+				default: 'text',
+				required: true,
+				placeholder: 'text',
+				description: 'The field name where the text content will be stored',
+				displayOptions: {
+					show: {
+						operation: ['upsert'],
+						addText: [true],
+					},
+				},
+			},
+			{
+				displayName: 'Text Content',
+				name: 'textContent',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: 'Enter text content',
+				description:
+					'The text content to add to the document. You can use expressions to reference other fields.',
+				displayOptions: {
+					show: {
+						operation: ['upsert'],
+						addText: [true],
+					},
+				},
+			},
+			{
 				displayName: 'Add Metadata',
 				name: 'addMetadata',
 				type: 'boolean',
@@ -295,7 +338,7 @@ export class HkuCosmosDbNode implements INodeType {
 				default: '',
 				required: true,
 				placeholder: 'Enter full-text search keywords',
-				description: 'Keywords for full-text search (used in FullTextScore)',
+				description: 'Keywords for full-text search',
 				displayOptions: {
 					show: {
 						operation: ['hybridSearch'],
@@ -391,7 +434,7 @@ export class HkuCosmosDbNode implements INodeType {
 				displayName: 'Fields to Exclude',
 				name: 'fieldsToExclude',
 				type: 'string',
-				default: '',
+				default: 'vector,text',
 				placeholder: 'field1,field2,field3',
 				description: 'Comma-separated list of field names to exclude from results',
 				displayOptions: {
@@ -494,7 +537,10 @@ export class HkuCosmosDbNode implements INodeType {
 						const textToEmbed = this.getNodeParameter('textToEmbed', itemIndex) as string;
 
 						// Get the AI Embedding from the connected node
-						const aiData = (await this.getInputConnectionData('ai_embedding', 0)) as any;
+						const aiData = (await this.getInputConnectionData(
+							NodeConnectionTypes.AiEmbedding,
+							0,
+						)) as any;
 
 						if (!aiData?.embedQuery) {
 							throw new NodeOperationError(
@@ -509,6 +555,16 @@ export class HkuCosmosDbNode implements INodeType {
 
 						// Add embedding to document
 						document[vectorFieldName] = embedding;
+					}
+
+					// Handle text if enabled
+					const addText = this.getNodeParameter('addText', itemIndex, false) as boolean;
+					if (addText) {
+						const textFieldName = this.getNodeParameter('textFieldName', itemIndex) as string;
+						const textContent = this.getNodeParameter('textContent', itemIndex) as string;
+
+						// Add text to document
+						document[textFieldName] = textContent;
 					}
 
 					// Merge metadata into document.metadata if requested
@@ -578,7 +634,10 @@ export class HkuCosmosDbNode implements INodeType {
 					const fieldsToExclude = this.getNodeParameter('fieldsToExclude', itemIndex, '') as string;
 
 					// Generate embedding from search query using AI embedding
-					const aiData = (await this.getInputConnectionData('ai_embedding', 0)) as {
+					const aiData = (await this.getInputConnectionData(
+						NodeConnectionTypes.AiEmbedding,
+						0,
+					)) as {
 						embedQuery: (query: string) => Promise<number[]>;
 					};
 					if (!aiData || typeof aiData.embedQuery !== 'function') {
@@ -596,7 +655,11 @@ export class HkuCosmosDbNode implements INodeType {
 					// Escape inputs to avoid breaking SQL
 					const escapeDoubleQuotes = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 					const escapeSingleQuotes = (s: string) => s.replace(/'/g, "''");
-					const safeKeyword = escapeDoubleQuotes(keyword);
+					const safeKeyword = escapeDoubleQuotes(keyword)
+						.trim()
+						.split(/\s+/)
+						.map((word) => `'${word}'`)
+						.join(',');
 					const safePartitionKeyValue = partitionKeyValue
 						? escapeSingleQuotes(partitionKeyValue)
 						: '';
@@ -606,8 +669,8 @@ export class HkuCosmosDbNode implements INodeType {
 
 					// Build RRF hybrid search query with inlined values
 					const rrfQuery = partitionKeyValue
-						? `SELECT TOP ${topK} * FROM c WHERE c.${partitionKeyField}='${safePartitionKeyValue}' ORDER BY RANK RRF(FullTextScore(c.text, '${safeKeyword}'), VectorDistance(c.vector, ${embeddingLiteral}))`
-						: `SELECT TOP ${topK} * FROM c ORDER BY RANK RRF(FullTextScore(c.text, '${safeKeyword}'), VectorDistance(c.vector, ${embeddingLiteral}))`;
+						? `SELECT TOP ${topK} * FROM c WHERE c.${partitionKeyField}='${safePartitionKeyValue}' ORDER BY RANK RRF(FullTextScore(c.text, ${safeKeyword}), VectorDistance(c.vector, ${embeddingLiteral}))`
+						: `SELECT TOP ${topK} * FROM c ORDER BY RANK RRF(FullTextScore(c.text, ${safeKeyword}), VectorDistance(c.vector, ${embeddingLiteral}))`;
 
 					console.log('RRF Hybrid Search - SQL Query:', rrfQuery);
 					console.log('RRF Hybrid Search - Keyword:', keyword);
