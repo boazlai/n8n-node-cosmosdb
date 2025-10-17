@@ -47,21 +47,27 @@ export class HkuCosmosDbNode implements INodeType {
 					{
 						name: 'Select',
 						value: 'select',
-						description: 'Query documents using SQL',
+						description: 'Query and retrieve documents',
 						action: 'Select documents',
 					},
 					{
-						name: 'Upsert',
+						name: 'Create or Update',
 						value: 'upsert',
-						description: 'Create or update a document',
+						description:
+							'Create a new record, or update the current one if it already exists (upsert)',
 						action: 'Upsert a document',
+					},
+					{
+						name: 'Hybrid Search',
+						value: 'hybridSearch',
+						description: 'Perform hybrid search combining full-text and vector search',
+						action: 'Hybrid search documents',
 					},
 				],
 				default: 'select',
-				description: 'The operation to perform',
 			},
 			{
-				displayName: 'Database Name',
+				displayName: 'Database Name or ID',
 				name: 'databaseName',
 				type: 'options',
 				typeOptions: {
@@ -69,10 +75,11 @@ export class HkuCosmosDbNode implements INodeType {
 				},
 				default: '',
 				required: true,
-				description: 'The name of the Cosmos DB database',
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 			},
 			{
-				displayName: 'Container Name',
+				displayName: 'Container Name or ID',
 				name: 'containerName',
 				type: 'options',
 				typeOptions: {
@@ -81,7 +88,8 @@ export class HkuCosmosDbNode implements INodeType {
 				},
 				default: '',
 				required: true,
-				description: 'The name of the container within the database',
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 			},
 			{
 				displayName: 'SQL Query',
@@ -101,11 +109,53 @@ export class HkuCosmosDbNode implements INodeType {
 				},
 			},
 			{
+				displayName: 'Return All',
+				name: 'returnAll',
+				type: 'boolean',
+				default: true,
+				description: 'Whether to return all results or only up to a given limit',
+				displayOptions: {
+					show: {
+						operation: ['select'],
+					},
+				},
+			},
+			{
+				displayName: 'Limit',
+				name: 'limit',
+				type: 'number',
+				default: 50,
+				placeholder: '50',
+				typeOptions: {
+					minValue: 1,
+				},
+				displayOptions: {
+					show: {
+						operation: ['select'],
+						returnAll: [false],
+					},
+				},
+				description: 'Max number of results to return',
+			},
+			{
+				displayName: 'Simplify Output',
+				name: 'simplifyOutput',
+				type: 'boolean',
+				default: true,
+				description:
+					'Whether to exclude internal Cosmos DB fields (_rid, _self, _etag, _attachments, _ts)',
+				displayOptions: {
+					show: {
+						operation: ['select'],
+					},
+				},
+			},
+			{
 				displayName: 'Exclude Fields',
 				name: 'excludeFields',
 				type: 'boolean',
 				default: false,
-				description: 'Whether to exclude specific fields from the results',
+				description: 'Whether to exclude additional specific fields from the results',
 				displayOptions: {
 					show: {
 						operation: ['select'],
@@ -132,11 +182,8 @@ export class HkuCosmosDbNode implements INodeType {
 				type: 'json',
 				default: '{\n\t"id": "my-document-id",\n\t"category": ""\n}',
 				required: true,
-				typeOptions: {
-					rows: 8,
-				},
 				description:
-					'The JSON document to upsert. Must include an "id" field and the partition key field defined in your container.',
+					'The JSON document to upsert. Must include an "ID" field and the partition key field defined in your container.',
 				displayOptions: {
 					show: {
 						operation: ['upsert'],
@@ -240,6 +287,120 @@ export class HkuCosmosDbNode implements INodeType {
 				],
 				description: 'Key-value pairs to add to the document metadata field',
 			},
+			// Hybrid Search parameters
+			{
+				displayName: 'Keyword (Full Text Search)',
+				name: 'keyword',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: 'Enter full-text search keywords',
+				description: 'Keywords for full-text search (used in FullTextScore)',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+			},
+			{
+				displayName: 'Search Query (Vector Search)',
+				name: 'searchQuery',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: 'Enter semantic search query',
+				description: 'Query text for vector embedding search (used in VectorDistance)',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+			},
+			{
+				displayName: 'Top K',
+				name: 'topK',
+				type: 'number',
+				default: 10,
+				required: true,
+				placeholder: '10',
+				typeOptions: {
+					minValue: 1,
+					maxValue: 1000,
+				},
+				description: 'Number of top results to retrieve from the database',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+			},
+			{
+				displayName: 'Partition Key Field',
+				name: 'partitionKeyField',
+				type: 'string',
+				default: 'category',
+				required: true,
+				placeholder: 'category',
+				description: 'The partition key field name (e.g., category, ID)',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+			},
+			{
+				displayName: 'Partition Key Value',
+				name: 'partitionKeyValue',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: '',
+				description: 'The partition key value for filtering (optional - leave empty if not needed)',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+			},
+			{
+				displayName: 'Simplify Output',
+				name: 'simplifyOutput',
+				type: 'boolean',
+				default: true,
+				description:
+					'Whether to exclude internal Cosmos DB fields (_rid, _self, _etag, _attachments, _ts)',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+			},
+			{
+				displayName: 'Exclude Fields',
+				name: 'excludeFields',
+				type: 'boolean',
+				default: false,
+				description: 'Whether to exclude additional specific fields from the results',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+			},
+			{
+				displayName: 'Fields to Exclude',
+				name: 'fieldsToExclude',
+				type: 'string',
+				default: '',
+				placeholder: 'field1,field2,field3',
+				description: 'Comma-separated list of field names to exclude from results',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+						excludeFields: [true],
+					},
+				},
+			},
 		],
 	};
 
@@ -265,26 +426,45 @@ export class HkuCosmosDbNode implements INodeType {
 				if (operation === 'select') {
 					// SELECT operation
 					const sqlQuery = this.getNodeParameter('sqlQuery', itemIndex) as string;
+					const returnAll = this.getNodeParameter('returnAll', itemIndex, true) as boolean;
+					const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+					const simplifyOutput = this.getNodeParameter(
+						'simplifyOutput',
+						itemIndex,
+						true,
+					) as boolean;
 					const excludeFields = this.getNodeParameter('excludeFields', itemIndex, false) as boolean;
-					const fieldsToExclude = excludeFields
-						? (this.getNodeParameter('fieldsToExclude', itemIndex, '') as string)
-						: '';
+					const fieldsToExclude = this.getNodeParameter('fieldsToExclude', itemIndex, '') as string;
 
 					// Execute the SQL query
 					const { resources } = await container.items.query(sqlQuery).fetchAll();
 
+					// Define internal Cosmos DB fields to exclude when simplifying
+					const internalFields = ['_rid', '_self', '_etag', '_attachments', '_ts'];
+
+					// Apply limit if not returning all
+					const resultSet = returnAll ? resources : resources.slice(0, limit);
+
 					// Process each result
-					for (const resource of resources) {
+					for (const resource of resultSet) {
 						let processedResource = resource;
 
-						// Remove excluded fields if requested
+						// Remove internal fields if simplify is enabled
+						if (simplifyOutput) {
+							processedResource = { ...resource };
+							for (const field of internalFields) {
+								delete processedResource[field];
+							}
+						}
+
+						// Remove additional excluded fields if requested
 						if (excludeFields && fieldsToExclude) {
 							const fieldsArray = fieldsToExclude
 								.split(',')
 								.map((f) => f.trim())
 								.filter((f) => f.length > 0);
 
-							processedResource = { ...resource };
+							processedResource = { ...processedResource };
 							for (const field of fieldsArray) {
 								delete processedResource[field];
 							}
@@ -374,6 +554,125 @@ export class HkuCosmosDbNode implements INodeType {
 						json: resource || document,
 						pairedItem: itemIndex,
 					});
+				} else if (operation === 'hybridSearch') {
+					// HYBRID SEARCH operation - RRF combining full-text and vector search
+					const keyword = this.getNodeParameter('keyword', itemIndex) as string;
+					const searchQuery = this.getNodeParameter('searchQuery', itemIndex) as string;
+					const topK = this.getNodeParameter('topK', itemIndex, 10) as number;
+					const partitionKeyField = this.getNodeParameter(
+						'partitionKeyField',
+						itemIndex,
+						'category',
+					) as string;
+					const partitionKeyValue = this.getNodeParameter(
+						'partitionKeyValue',
+						itemIndex,
+						'',
+					) as string;
+					const simplifyOutput = this.getNodeParameter(
+						'simplifyOutput',
+						itemIndex,
+						true,
+					) as boolean;
+					const excludeFields = this.getNodeParameter('excludeFields', itemIndex, false) as boolean;
+					const fieldsToExclude = this.getNodeParameter('fieldsToExclude', itemIndex, '') as string;
+
+					// Generate embedding from search query using AI embedding
+					const aiData = (await this.getInputConnectionData('ai_embedding', 0)) as {
+						embedQuery: (query: string) => Promise<number[]>;
+					};
+					if (!aiData || typeof aiData.embedQuery !== 'function') {
+						throw new NodeOperationError(
+							this.getNode(),
+							'AI Embedding is required for hybrid search. Please connect an embeddings node to the Embedding input.',
+							{ itemIndex },
+						);
+					}
+
+					// Generate embedding for the search query
+					const embedding = await aiData.embedQuery(searchQuery);
+
+					// RRF Hybrid Search (Full-text + Vector) - Direct Cosmos SDK
+					// Escape inputs to avoid breaking SQL
+					const escapeDoubleQuotes = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+					const escapeSingleQuotes = (s: string) => s.replace(/'/g, "''");
+					const safeKeyword = escapeDoubleQuotes(keyword);
+					const safePartitionKeyValue = partitionKeyValue
+						? escapeSingleQuotes(partitionKeyValue)
+						: '';
+
+					// Inline the embedding as a literal array in the SQL
+					const embeddingLiteral = `[${embedding.join(',')}]`;
+
+					// Build RRF hybrid search query with inlined values
+					const rrfQuery = partitionKeyValue
+						? `SELECT TOP ${topK} * FROM c WHERE c.${partitionKeyField}='${safePartitionKeyValue}' ORDER BY RANK RRF(FullTextScore(c.text, '${safeKeyword}'), VectorDistance(c.vector, ${embeddingLiteral}))`
+						: `SELECT TOP ${topK} * FROM c ORDER BY RANK RRF(FullTextScore(c.text, '${safeKeyword}'), VectorDistance(c.vector, ${embeddingLiteral}))`;
+
+					console.log('RRF Hybrid Search - SQL Query:', rrfQuery);
+					console.log('RRF Hybrid Search - Keyword:', keyword);
+					console.log('RRF Hybrid Search - Search Query:', searchQuery);
+					console.log('RRF Hybrid Search - Top K:', topK);
+					console.log('RRF Hybrid Search - Embedding length:', embedding.length);
+
+					try {
+						// Execute RRF query directly through Cosmos SDK
+						const { resources } = await container.items.query(rrfQuery).fetchAll();
+
+						// Define internal Cosmos DB fields to exclude when simplifying
+						const internalFields = ['_rid', '_self', '_etag', '_attachments', '_ts'];
+
+						if (resources && resources.length > 0) {
+							// Process each result
+							for (const resource of resources) {
+								let processedResource = resource;
+
+								// Remove internal fields if simplify is enabled
+								if (simplifyOutput) {
+									processedResource = { ...resource };
+									for (const field of internalFields) {
+										delete processedResource[field];
+									}
+								}
+
+								// Remove additional excluded fields if requested
+								if (excludeFields && fieldsToExclude) {
+									const fieldsArray = fieldsToExclude
+										.split(',')
+										.map((f) => f.trim())
+										.filter((f) => f.length > 0);
+
+									processedResource = { ...processedResource };
+									for (const field of fieldsArray) {
+										delete processedResource[field];
+									}
+								}
+
+								returnData.push({
+									json: processedResource,
+									pairedItem: itemIndex,
+								});
+							}
+						} else {
+							returnData.push({
+								json: {
+									message: 'No results found',
+									keyword,
+									searchQuery,
+									topK,
+									resultsCount: 0,
+								},
+								pairedItem: itemIndex,
+							});
+						}
+					} catch (error) {
+						console.error('RRF Hybrid Search Error:', error);
+						throw new NodeOperationError(
+							this.getNode(),
+							`RRF hybrid search failed: ${error.message}`,
+							{ itemIndex },
+						);
+					}
 				}
 			} catch (error) {
 				if (this.continueOnFail()) {
