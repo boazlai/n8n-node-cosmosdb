@@ -672,11 +672,6 @@ export class HkuCosmosDbNode implements INodeType {
 						? `SELECT TOP ${topK} * FROM c WHERE c.${partitionKeyField}='${safePartitionKeyValue}' ORDER BY RANK RRF(FullTextScore(c.text, ${safeKeyword}), VectorDistance(c.vector, ${embeddingLiteral}))`
 						: `SELECT TOP ${topK} * FROM c ORDER BY RANK RRF(FullTextScore(c.text, ${safeKeyword}), VectorDistance(c.vector, ${embeddingLiteral}))`;
 
-					console.log('RRF Hybrid Search - SQL Query:', rrfQuery);
-					console.log('RRF Hybrid Search - Keyword:', keyword);
-					console.log('RRF Hybrid Search - Search Query:', searchQuery);
-					console.log('RRF Hybrid Search - Top K:', topK);
-					console.log('RRF Hybrid Search - Embedding length:', embedding.length);
 
 					try {
 						// Execute RRF query directly through Cosmos SDK
