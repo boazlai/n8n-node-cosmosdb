@@ -9,16 +9,16 @@ import type {
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { CosmosClient } from '@azure/cosmos';
 
-export class HkuCosmosDbNode implements INodeType {
+export class CosmosDbNode implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'HKU Cosmos DB (Boaz)',
-		name: 'hkuCosmosDb',
+		displayName: 'Cosmos DB (Boaz)',
+		name: 'cosmosDb',
 		icon: { light: 'file:database.svg', dark: 'file:lightDatabase.svg' },
 		group: ['transform'],
 		version: 1,
-		description: 'HKU Cosmos DB Node - Upsert documents to Azure Cosmos DB',
+		description: 'Cosmos DB Node - Upsert documents to Azure Cosmos DB',
 		defaults: {
-			name: 'HKU Cosmos DB (Boaz)',
+			name: 'Cosmos DB (Boaz)',
 		},
 		inputs: [
 			NodeConnectionTypes.Main,
@@ -33,7 +33,7 @@ export class HkuCosmosDbNode implements INodeType {
 		usableAsTool: true,
 		credentials: [
 			{
-				name: 'hkuCosmosDbApi',
+				name: 'cosmosDbApi',
 				required: true,
 			},
 		],
@@ -451,7 +451,7 @@ export class HkuCosmosDbNode implements INodeType {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
 
-		const credentials = await this.getCredentials('hkuCosmosDbApi');
+		const credentials = await this.getCredentials('CosmosDbApi');
 		const endpoint = credentials.endpoint as string;
 		const key = credentials.key as string;
 
@@ -756,7 +756,7 @@ export class HkuCosmosDbNode implements INodeType {
 	methods = {
 		loadOptions: {
 			async getDatabases(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const credentials = await this.getCredentials('hkuCosmosDbApi');
+				const credentials = await this.getCredentials('CosmosDbApi');
 				const endpoint = credentials.endpoint as string;
 				const key = credentials.key as string;
 

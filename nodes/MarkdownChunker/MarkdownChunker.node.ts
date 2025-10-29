@@ -384,17 +384,17 @@ function packUnits(
 
 // ========== Node Class ==========
 
-export class HkuChunker implements INodeType {
+export class MarkdownChunker implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'HKU Markdown Chunker',
-		name: 'hkuChunker',
+		displayName: 'Markdown Chunker',
+		name: 'markdownChunker',
 		icon: { light: 'file:chunking.svg', dark: 'file:lightChunking.svg' },
 		group: ['transform'],
 		version: 1,
 		description:
 			'Markdown-aware chunker for RAG - splits text intelligently without breaking structure',
 		defaults: {
-			name: 'HKU Markdown Chunker',
+			name: 'Markdown Chunker',
 		},
 		inputs: ['main'],
 		outputs: ['main'],
