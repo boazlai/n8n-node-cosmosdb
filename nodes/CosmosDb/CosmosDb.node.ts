@@ -2,6 +2,7 @@ import type {
 	IExecuteFunctions,
 	ILoadOptionsFunctions,
 	INodeExecutionData,
+	INodeListSearchResult,
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
@@ -9,7 +10,7 @@ import type {
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { CosmosClient } from '@azure/cosmos';
 
-export class CosmosDbNode implements INodeType {
+export class CosmosDb implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Cosmos DB (Boaz)',
 		name: 'cosmosDb',
@@ -58,6 +59,12 @@ export class CosmosDbNode implements INodeType {
 						action: 'Upsert a document',
 					},
 					{
+						name: 'Delete',
+						value: 'delete',
+						description: 'Delete a document by ID and partition key',
+						action: 'Delete a document',
+					},
+					{
 						name: 'Hybrid Search',
 						value: 'hybridSearch',
 						description: 'Perform hybrid search combining full-text and vector search',
@@ -90,6 +97,68 @@ export class CosmosDbNode implements INodeType {
 				required: true,
 				description:
 					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+			},
+			// Delete operation fields
+			{
+				displayName: 'Item',
+				name: 'item',
+				type: 'resourceLocator',
+				required: true,
+				default: { mode: 'list', value: '' },
+				displayOptions: {
+					show: {
+						operation: ['delete'],
+					},
+				},
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				modes: [
+					{
+						displayName: 'From list',
+						name: 'list',
+						type: 'list',
+						typeOptions: {
+							searchListMethod: 'searchItemIds',
+							searchFilterRequired: false,
+						},
+					},
+					{
+						displayName: 'By ID',
+						name: 'id',
+						type: 'string',
+						placeholder: 'Enter the item ID or use an expression',
+					},
+				],
+			},
+			{
+				displayName: 'Partition Key',
+				name: 'partitionKey',
+				type: 'resourceLocator',
+				required: true,
+				default: { mode: 'value', value: '' },
+				description: 'Partition key value for the item to delete',
+				displayOptions: {
+					show: {
+						operation: ['delete'],
+					},
+				},
+				modes: [
+					{
+						displayName: 'From list',
+						name: 'list',
+						type: 'list',
+						typeOptions: {
+							searchListMethod: 'searchPartitionKeys',
+							searchFilterRequired: false,
+						},
+					},
+					{
+						displayName: 'By value',
+						name: 'value',
+						type: 'string',
+						placeholder: 'Enter the partition key value or use an expression',
+					},
+				],
 			},
 			{
 				displayName: 'SQL Query',
@@ -451,7 +520,7 @@ export class CosmosDbNode implements INodeType {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
 
-		const credentials = await this.getCredentials('CosmosDbApi');
+		const credentials = await this.getCredentials('cosmosDbApi');
 		const endpoint = credentials.endpoint as string;
 		const key = credentials.key as string;
 
@@ -594,11 +663,22 @@ export class CosmosDbNode implements INodeType {
 					const partitionKeyPath =
 						containerDef.resource?.partitionKey?.paths?.[0]?.replace('/', '') || 'id';
 
-					// Validate partition key field exists
-					if (!Object.prototype.hasOwnProperty.call(document, partitionKeyPath)) {
+					// Validate partition key field exists and has a non-empty value
+					const hasPkField = Object.prototype.hasOwnProperty.call(document, partitionKeyPath);
+					if (!hasPkField) {
 						throw new NodeOperationError(
 							this.getNode(),
 							`Document must include the partition key field '${partitionKeyPath}'. Add this field to your document.`,
+							{ itemIndex },
+						);
+					}
+
+					const pkValue = (document as any)[partitionKeyPath];
+					const isEmptyString = typeof pkValue === 'string' && pkValue.trim() === '';
+					if (pkValue === undefined || pkValue === null || isEmptyString) {
+						throw new NodeOperationError(
+							this.getNode(),
+							`Partition key '${partitionKeyPath}' must have a non-empty value when creating or updating an item.`,
 							{ itemIndex },
 						);
 					}
@@ -672,7 +752,6 @@ export class CosmosDbNode implements INodeType {
 						? `SELECT TOP ${topK} * FROM c WHERE c.${partitionKeyField}='${safePartitionKeyValue}' ORDER BY RANK RRF(FullTextScore(c.text, ${safeKeyword}), VectorDistance(c.vector, ${embeddingLiteral}))`
 						: `SELECT TOP ${topK} * FROM c ORDER BY RANK RRF(FullTextScore(c.text, ${safeKeyword}), VectorDistance(c.vector, ${embeddingLiteral}))`;
 
-
 					try {
 						// Execute RRF query directly through Cosmos SDK
 						const { resources } = await container.items.query(rrfQuery).fetchAll();
@@ -731,6 +810,49 @@ export class CosmosDbNode implements INodeType {
 							{ itemIndex },
 						);
 					}
+				} else if (operation === 'delete') {
+					// DELETE operation
+					const partitionKeyParam = this.getNodeParameter('partitionKey', itemIndex) as
+						| string
+						| {
+								mode: 'list' | 'value';
+								value: string;
+						  };
+					const partitionKey =
+						typeof partitionKeyParam === 'string'
+							? partitionKeyParam
+							: (partitionKeyParam?.value as string);
+					const itemParam = this.getNodeParameter('item', itemIndex) as
+						| string
+						| {
+								mode: 'list' | 'id';
+								value: string;
+						  };
+					const id = typeof itemParam === 'string' ? itemParam : (itemParam?.value as string);
+
+					if (!id) {
+						throw new NodeOperationError(this.getNode(), 'Item ID is required for delete', {
+							itemIndex,
+						});
+					}
+					if (!partitionKey) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Partition key value is required for delete. Enter the exact partition key for this item.',
+							{ itemIndex },
+						);
+					}
+
+					const response = await container.item(id, partitionKey).delete();
+					returnData.push({
+						json: {
+							id,
+							partitionKey,
+							statusCode: response.statusCode,
+							deleted: response.statusCode >= 200 && response.statusCode < 300,
+						},
+						pairedItem: itemIndex,
+					});
 				}
 			} catch (error) {
 				if (this.continueOnFail()) {
@@ -756,7 +878,7 @@ export class CosmosDbNode implements INodeType {
 	methods = {
 		loadOptions: {
 			async getDatabases(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const credentials = await this.getCredentials('CosmosDbApi');
+				const credentials = await this.getCredentials('cosmosDbApi');
 				const endpoint = credentials.endpoint as string;
 				const key = credentials.key as string;
 
@@ -777,7 +899,7 @@ export class CosmosDbNode implements INodeType {
 			},
 
 			async getContainers(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const credentials = await this.getCredentials('hkuCosmosDbApi');
+				const credentials = await this.getCredentials('cosmosDbApi');
 				const endpoint = credentials.endpoint as string;
 				const key = credentials.key as string;
 				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
@@ -799,6 +921,152 @@ export class CosmosDbNode implements INodeType {
 					throw new NodeOperationError(
 						this.getNode(),
 						`Failed to load containers: ${error.message}`,
+					);
+				}
+			},
+
+			async getItemIds(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const credentials = await this.getCredentials('cosmosDbApi');
+				const endpoint = credentials.endpoint as string;
+				const key = credentials.key as string;
+				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
+				const containerName = this.getCurrentNodeParameter('containerName') as string;
+
+				if (!databaseName || !containerName) {
+					return [];
+				}
+
+				const client = new CosmosClient({ endpoint, key });
+				try {
+					const container = client.database(databaseName).container(containerName);
+					// Limit to first 200 IDs to keep dropdown responsive
+					const query = {
+						query: 'SELECT c.id FROM c',
+					};
+					const { resources } = await container.items
+						.query(query, { maxItemCount: 200 })
+						.fetchAll();
+					return resources
+						.map((r: any) => r.id)
+						.filter((id: any) => typeof id === 'string')
+						.slice(0, 200)
+						.map((id: string) => ({ name: id, value: id }));
+				} catch (error) {
+					throw new NodeOperationError(this.getNode(), `Failed to load item IDs: ${error.message}`);
+				}
+			},
+
+			// For resource locator list mode with search support
+			async searchItemIds(
+				this: ILoadOptionsFunctions,
+				filter?: string,
+			): Promise<INodePropertyOptions[]> {
+				const credentials = await this.getCredentials('cosmosDbApi');
+				const endpoint = credentials.endpoint as string;
+				const key = credentials.key as string;
+				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
+				const containerName = this.getCurrentNodeParameter('containerName') as string;
+
+				if (!databaseName || !containerName) return [];
+
+				const client = new CosmosClient({ endpoint, key });
+				try {
+					const container = client.database(databaseName).container(containerName);
+					const querySpec = { query: 'SELECT c.id FROM c' };
+					const { resources } = await container.items
+						.query(querySpec, { maxItemCount: 200 })
+						.fetchAll();
+					const ids = resources
+						.map((r: any) => r.id)
+						.filter((id: any) => typeof id === 'string') as string[];
+					const normalizedFilter = (filter || '').toLowerCase();
+					return ids
+						.filter((id) => !normalizedFilter || id.toLowerCase().includes(normalizedFilter))
+						.slice(0, 200)
+						.map((id) => ({ name: id, value: id }));
+				} catch (error) {
+					throw new NodeOperationError(
+						this.getNode(),
+						`Failed to search item IDs: ${error.message}`,
+					);
+				}
+			},
+		},
+		listSearch: {
+			async searchItemIds(
+				this: ILoadOptionsFunctions,
+				filter?: string,
+			): Promise<INodeListSearchResult> {
+				const credentials = await this.getCredentials('cosmosDbApi');
+				const endpoint = credentials.endpoint as string;
+				const key = credentials.key as string;
+				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
+				const containerName = this.getCurrentNodeParameter('containerName') as string;
+
+				if (!databaseName || !containerName) return { results: [] };
+
+				const client = new CosmosClient({ endpoint, key });
+				try {
+					const container = client.database(databaseName).container(containerName);
+					const query = { query: 'SELECT VALUE c.id FROM c' };
+					const { resources } = await container.items
+						.query(query, { maxItemCount: 200 })
+						.fetchAll();
+					const ids = (resources as any[]).filter((v) => typeof v === 'string') as string[];
+					const f = (filter || '').toLowerCase();
+					return {
+						results: ids
+							.filter((id) => !f || id.toLowerCase().includes(f))
+							.slice(0, 200)
+							.map((id) => ({ name: id, value: id })),
+					};
+				} catch (error) {
+					throw new NodeOperationError(
+						this.getNode(),
+						`Failed to search item IDs: ${error.message}`,
+					);
+				}
+			},
+
+			async searchPartitionKeys(
+				this: ILoadOptionsFunctions,
+				filter?: string,
+			): Promise<INodeListSearchResult> {
+				const credentials = await this.getCredentials('cosmosDbApi');
+				const endpoint = credentials.endpoint as string;
+				const key = credentials.key as string;
+				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
+				const containerName = this.getCurrentNodeParameter('containerName') as string;
+
+				if (!databaseName || !containerName) return { results: [] };
+
+				const client = new CosmosClient({ endpoint, key });
+				try {
+					const container = client.database(databaseName).container(containerName);
+					const def = await container.read();
+					const pkPathRaw = def.resource?.partitionKey?.paths?.[0] || '/id';
+					const pkField = pkPathRaw.replace('/', '');
+					const query = {
+						query: `SELECT DISTINCT VALUE c.${pkField} FROM c WHERE IS_DEFINED(c.${pkField})`,
+					};
+					const { resources } = await container.items
+						.query(query, { maxItemCount: 200 })
+						.fetchAll();
+					const values = (resources as any[]).filter(
+						(v) => typeof v === 'string' || typeof v === 'number',
+					);
+					const f = (filter || '').toLowerCase();
+					return {
+						results: values
+							.map((v) => String(v))
+							.filter((v) => !f || v.toLowerCase().includes(f))
+							.slice(0, 200)
+							.map((v) => ({ name: v, value: v })),
+					};
+				} catch (error) {
+					throw new NodeOperationError(
+						this.getNode(),
+						`Failed to search partition keys: ${error.message}`,
 					);
 				}
 			},
