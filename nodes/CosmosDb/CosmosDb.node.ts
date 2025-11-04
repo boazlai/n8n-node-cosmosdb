@@ -57,10 +57,10 @@ export class CosmosDb implements INodeType {
 				noDataExpression: true,
 				options: [
 					{
-						name: 'Select',
-						value: 'select',
-						description: 'Query and retrieve documents',
-						action: 'Select documents',
+						name: 'Add',
+						value: 'add',
+						description: 'Add new fields to an existing document',
+						action: 'Add fields to a document',
 					},
 					{
 						name: 'Create or Update',
@@ -80,6 +80,18 @@ export class CosmosDb implements INodeType {
 						value: 'hybridSearch',
 						description: 'Perform hybrid search combining full-text and vector search',
 						action: 'Hybrid search documents',
+					},
+					{
+						name: 'Select',
+						value: 'select',
+						description: 'Query and retrieve documents',
+						action: 'Select documents',
+					},
+					{
+						name: 'Set',
+						value: 'set',
+						description: 'Update specific fields on an existing document',
+						action: 'Set fields on a document',
 					},
 				],
 				displayOptions: {
@@ -136,6 +148,7 @@ export class CosmosDb implements INodeType {
 					loadOptionsMethod: 'getDatabases',
 				},
 				default: '',
+				placeholder: 'Select a database…',
 				required: true,
 				description:
 					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
@@ -154,6 +167,7 @@ export class CosmosDb implements INodeType {
 					loadOptionsMethod: 'getContainers',
 				},
 				default: '',
+				placeholder: 'Select a container…',
 				required: true,
 				description:
 					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
@@ -170,10 +184,11 @@ export class CosmosDb implements INodeType {
 				type: 'resourceLocator',
 				required: true,
 				default: { mode: 'list', value: '' },
+				placeholder: 'Select an item…',
 				displayOptions: {
 					show: {
 						resource: ['item'],
-						operation: ['delete'],
+						operation: ['delete', 'set', 'add'],
 					},
 				},
 				description:
@@ -202,11 +217,11 @@ export class CosmosDb implements INodeType {
 				type: 'resourceLocator',
 				required: true,
 				default: { mode: 'value', value: '' },
-				description: 'Partition key value for the item to delete',
+				description: 'Partition key value for the item',
 				displayOptions: {
 					show: {
 						resource: ['item'],
-						operation: ['delete'],
+						operation: ['delete', 'set', 'add'],
 					},
 				},
 				modes: [
@@ -224,6 +239,96 @@ export class CosmosDb implements INodeType {
 						name: 'value',
 						type: 'string',
 						placeholder: 'Enter the partition key value or use an expression',
+					},
+				],
+			},
+			// Set operation fields
+			{
+				displayName: 'Fields to Set',
+				name: 'fieldsToSet',
+				type: 'fixedCollection',
+				placeholder: 'Add Field',
+				typeOptions: {
+					multipleValues: true,
+				},
+				default: {},
+				required: true,
+				description:
+					'Key/value pairs to set on the item. Use JSON Pointer paths like /status or /metadata/title. Values can be JSON (e.g. 123, true, {"a":1}) or plain text.',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['set'],
+					},
+				},
+				options: [
+					{
+						name: 'pairs',
+						displayName: 'Pairs',
+						values: [
+							{
+								displayName: 'Field Path',
+								name: 'path',
+								type: 'string',
+								default: '',
+								placeholder: '/status',
+								description: 'JSON Pointer path to the field to update (must start with /)',
+							},
+							{
+								displayName: 'Value',
+								name: 'value',
+								type: 'string',
+								default: '',
+								placeholder: '"active"',
+								description:
+									'Value to set. If this is valid JSON it will be parsed; otherwise it will be treated as a string.',
+							},
+						],
+					},
+				],
+			},
+			// Add operation fields
+			{
+				displayName: 'Fields to Add',
+				name: 'fieldsToAdd',
+				type: 'fixedCollection',
+				placeholder: 'Add Field',
+				typeOptions: {
+					multipleValues: true,
+				},
+				default: {},
+				required: true,
+				description:
+					'Key/value pairs to add to the item. Use JSON Pointer paths like /newField or /metadata/tag. Values can be JSON (e.g. 123, true, {"a":1}) or plain text.',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['add'],
+					},
+				},
+				options: [
+					{
+						name: 'pairs',
+						displayName: 'Pairs',
+						values: [
+							{
+								displayName: 'Field Path',
+								name: 'path',
+								type: 'string',
+								default: '',
+								placeholder: '/newField',
+								description: 'JSON Pointer path to the new field to add (must start with /)',
+							},
+							{
+								displayName: 'Value',
+								name: 'value',
+								type: 'string',
+								default: '',
+								placeholder: '"new value"',
+								description:
+									'Value to add. If this is valid JSON it will be parsed; otherwise it will be treated as a string.',
+							},
+						],
 					},
 				],
 			},
@@ -334,6 +439,62 @@ export class CosmosDb implements INodeType {
 				},
 			},
 			{
+				displayName: 'Add Metadata',
+				name: 'addMetadata',
+				type: 'boolean',
+				default: false,
+				description:
+					'Whether to add metadata key/value pairs that will be merged into document.metadata',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['upsert'],
+					},
+				},
+			},
+			{
+				displayName: 'Metadata',
+				name: 'metadata',
+				type: 'fixedCollection',
+				placeholder: 'Add Metadata',
+				typeOptions: {
+					multipleValues: true,
+				},
+				default: {},
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['upsert'],
+						addMetadata: [true],
+					},
+				},
+				options: [
+					{
+						name: 'pairs',
+						displayName: 'Pairs',
+						values: [
+							{
+								displayName: 'Key',
+								name: 'key',
+								type: 'string',
+								default: '',
+								placeholder: 'myKey',
+								description: 'The metadata key name',
+							},
+							{
+								displayName: 'Value',
+								name: 'value',
+								type: 'string',
+								default: '',
+								placeholder: 'myValue',
+								description: 'The metadata value',
+							},
+						],
+					},
+				],
+				description: 'Key-value pairs to add to the document metadata field',
+			},
+			{
 				displayName: 'Add Embedding',
 				name: 'addEmbedding',
 				type: 'boolean',
@@ -424,62 +585,6 @@ export class CosmosDb implements INodeType {
 						addText: [true],
 					},
 				},
-			},
-			{
-				displayName: 'Add Metadata',
-				name: 'addMetadata',
-				type: 'boolean',
-				default: false,
-				description:
-					'Whether to add metadata key/value pairs that will be merged into document.metadata',
-				displayOptions: {
-					show: {
-						resource: ['item'],
-						operation: ['upsert'],
-					},
-				},
-			},
-			{
-				displayName: 'Metadata',
-				name: 'metadata',
-				type: 'fixedCollection',
-				placeholder: 'Add Metadata',
-				typeOptions: {
-					multipleValues: true,
-				},
-				default: {},
-				displayOptions: {
-					show: {
-						resource: ['item'],
-						operation: ['upsert'],
-						addMetadata: [true],
-					},
-				},
-				options: [
-					{
-						name: 'pairs',
-						displayName: 'Pairs',
-						values: [
-							{
-								displayName: 'Key',
-								name: 'key',
-								type: 'string',
-								default: '',
-								placeholder: 'myKey',
-								description: 'The metadata key name',
-							},
-							{
-								displayName: 'Value',
-								name: 'value',
-								type: 'string',
-								default: '',
-								placeholder: 'myValue',
-								description: 'The metadata value',
-							},
-						],
-					},
-				],
-				description: 'Key-value pairs to add to the document metadata field',
 			},
 
 			// Container resource: create container
@@ -1050,31 +1155,238 @@ export class CosmosDb implements INodeType {
 							pairedItem: itemIndex,
 						});
 					}
-				} else if (operation === 'upsert') {
-					const documentJson = this.getNodeParameter('itemContent', itemIndex) as string;
+				} else if (operation === 'set') {
+					// SET operation (partial update using Cosmos DB patch)
+					const partitionKeyParam = this.getNodeParameter('partitionKey', itemIndex) as
+						| string
+						| {
+								mode: 'list' | 'value';
+								value: any;
+						  };
+					const partitionKey =
+						typeof partitionKeyParam === 'string' ? partitionKeyParam : partitionKeyParam?.value;
+					const itemParam = this.getNodeParameter('item', itemIndex) as
+						| string
+						| {
+								mode: 'list' | 'id';
+								value: string;
+						  };
+					const id = typeof itemParam === 'string' ? itemParam : (itemParam?.value as string);
 
-					let document: any;
-					try {
-						document = typeof documentJson === 'string' ? JSON.parse(documentJson) : documentJson;
-					} catch (error) {
-						throw new NodeOperationError(this.getNode(), 'Invalid JSON in Document field', {
+					if (!id) {
+						throw new NodeOperationError(this.getNode(), 'Item ID is required for set', {
+							itemIndex,
+						});
+					}
+					if (partitionKey === undefined || partitionKey === null || partitionKey === '') {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Partition key value is required for set. Enter the exact partition key for this item.',
+							{ itemIndex },
+						);
+					}
+
+					const fieldsToSet = this.getNodeParameter('fieldsToSet', itemIndex, {}) as {
+						pairs?: Array<{ path?: string; value?: string }>;
+					};
+					const pairs = fieldsToSet.pairs || [];
+					if (!pairs.length) {
+						throw new NodeOperationError(this.getNode(), 'Add at least one field to set', {
 							itemIndex,
 						});
 					}
 
-					// Handle embedding if enabled
-					const addEmbedding = this.getNodeParameter('addEmbedding', itemIndex, false) as boolean;
-					if (addEmbedding) {
-						const vectorFieldName = this.getNodeParameter('vectorFieldName', itemIndex) as string;
-						const textToEmbed = this.getNodeParameter('textToEmbed', itemIndex) as string;
+					const operations = pairs
+						.filter((p) => p && typeof p.path === 'string' && p.path.trim() !== '')
+						.map((p) => {
+							const rawPath = (p.path || '').trim();
+							const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+							const rawValue = (p.value ?? '').toString();
+							let parsedValue: any = rawValue;
+							try {
+								parsedValue = JSON.parse(rawValue);
+							} catch {
+								parsedValue = rawValue;
+							}
+							return { op: 'set', path, value: parsedValue };
+						});
 
-						// Get the AI Embedding from the connected node
+					if (!operations.length) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Fields to Set contains no valid paths. Provide at least one Field Path.',
+							{ itemIndex },
+						);
+					}
+
+					const response = await container.item(id, partitionKey as any).patch(operations as any);
+					returnData.push({
+						json: (response as any)?.resource || {
+							id,
+							partitionKey,
+							statusCode: (response as any)?.statusCode,
+							updated: (response as any)?.statusCode >= 200 && (response as any)?.statusCode < 300,
+						},
+						pairedItem: itemIndex,
+					});
+				} else if (operation === 'add') {
+					// ADD operation (add new fields using Cosmos DB patch)
+					const partitionKeyParam = this.getNodeParameter('partitionKey', itemIndex) as
+						| string
+						| {
+								mode: 'list' | 'value';
+								value: any;
+						  };
+					const partitionKey =
+						typeof partitionKeyParam === 'string' ? partitionKeyParam : partitionKeyParam?.value;
+					const itemParam = this.getNodeParameter('item', itemIndex) as
+						| string
+						| {
+								mode: 'list' | 'id';
+								value: string;
+						  };
+					const id = typeof itemParam === 'string' ? itemParam : (itemParam?.value as string);
+
+					if (!id) {
+						throw new NodeOperationError(this.getNode(), 'Item ID is required for add', {
+							itemIndex,
+						});
+					}
+					if (partitionKey === undefined || partitionKey === null || partitionKey === '') {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Partition key value is required for add. Enter the exact partition key for this item.',
+							{ itemIndex },
+						);
+					}
+
+					const fieldsToAdd = this.getNodeParameter('fieldsToAdd', itemIndex, {}) as {
+						pairs?: Array<{ path?: string; value?: string }>;
+					};
+					const pairs = fieldsToAdd.pairs || [];
+					if (!pairs.length) {
+						throw new NodeOperationError(this.getNode(), 'Add at least one field to add', {
+							itemIndex,
+						});
+					}
+
+					const operations = pairs
+						.filter((p) => p && typeof p.path === 'string' && p.path.trim() !== '')
+						.map((p) => {
+							const rawPath = (p.path || '').trim();
+							const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+							const rawValue = (p.value ?? '').toString();
+							let parsedValue: any = rawValue;
+							try {
+								parsedValue = JSON.parse(rawValue);
+							} catch {
+								parsedValue = rawValue;
+							}
+							return { op: 'add', path, value: parsedValue };
+						});
+
+					if (!operations.length) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Fields to Add contains no valid paths. Provide at least one Field Path.',
+							{ itemIndex },
+						);
+					}
+
+					const response = await container.item(id, partitionKey as any).patch(operations as any);
+					returnData.push({
+						json: (response as any)?.resource || {
+							id,
+							partitionKey,
+							statusCode: (response as any)?.statusCode,
+							added: (response as any)?.statusCode >= 200 && (response as any)?.statusCode < 300,
+						},
+						pairedItem: itemIndex,
+					});
+				} else if (operation === 'upsert') {
+					// Batch processing for upsert operations
+					// First pass: prepare all documents and collect texts for batch embedding
+					const documentsToProcess: Array<{
+						document: any;
+						itemIndex: number;
+						addEmbedding: boolean;
+						vectorFieldName?: string;
+						textToEmbed?: string;
+						addText: boolean;
+						textFieldName?: string;
+						textContent?: string;
+					}> = [];
+
+					// Collect all items that need processing
+					for (let i = itemIndex; i < items.length; i++) {
+						const currentOperation = this.getNodeParameter('operation', i) as string;
+						if (currentOperation !== 'upsert') {
+							break; // Stop if we hit a different operation
+						}
+
+						const documentJson = this.getNodeParameter('itemContent', i) as string;
+						let document: any;
+						try {
+							document = typeof documentJson === 'string' ? JSON.parse(documentJson) : documentJson;
+						} catch (error) {
+							throw new NodeOperationError(this.getNode(), 'Invalid JSON in Document field', {
+								itemIndex: i,
+							});
+						}
+
+						// Merge metadata into document.metadata if requested
+						const addMetadata = this.getNodeParameter('addMetadata', i, false) as boolean;
+						if (addMetadata) {
+							const metadataCollection = this.getNodeParameter('metadata', i, {}) as {
+								pairs?: Array<{ key?: string; value?: any }>;
+							};
+							const pairs = metadataCollection.pairs || [];
+							const metadataObj: Record<string, any> = {};
+							for (const pair of pairs) {
+								if (pair && pair.key) {
+									metadataObj[pair.key] = pair.value;
+								}
+							}
+							// Merge with existing metadata or create new metadata object
+							document.metadata = { ...(document.metadata || {}), ...metadataObj };
+						}
+
+						const addEmbedding = this.getNodeParameter('addEmbedding', i, false) as boolean;
+						const addText = this.getNodeParameter('addText', i, false) as boolean;
+
+						documentsToProcess.push({
+							document,
+							itemIndex: i,
+							addEmbedding,
+							vectorFieldName: addEmbedding
+								? (this.getNodeParameter('vectorFieldName', i) as string)
+								: undefined,
+							textToEmbed: addEmbedding
+								? (this.getNodeParameter('textToEmbed', i) as string)
+								: undefined,
+							addText,
+							textFieldName: addText
+								? (this.getNodeParameter('textFieldName', i) as string)
+								: undefined,
+							textContent: addText
+								? (this.getNodeParameter('textContent', i) as string)
+								: undefined,
+						});
+					}
+
+					// Batch embed all texts if needed
+					const textsToEmbed = documentsToProcess
+						.filter((item) => item.addEmbedding)
+						.map((item) => item.textToEmbed!);
+
+					let embeddings: number[][] = [];
+					if (textsToEmbed.length > 0) {
 						const aiData = (await this.getInputConnectionData(
 							NodeConnectionTypes.AiEmbedding,
 							0,
 						)) as any;
 
-						if (!aiData?.embedQuery) {
+						if (!aiData) {
 							throw new NodeOperationError(
 								this.getNode(),
 								'No embedding model connected. Please connect an Embeddings node to the AI input.',
@@ -1082,77 +1394,73 @@ export class CosmosDb implements INodeType {
 							);
 						}
 
-						// Generate embedding for the text
-						const embedding = await aiData.embedQuery(textToEmbed);
-
-						// Add embedding to document
-						document[vectorFieldName] = embedding;
-					}
-
-					// Handle text if enabled
-					const addText = this.getNodeParameter('addText', itemIndex, false) as boolean;
-					if (addText) {
-						const textFieldName = this.getNodeParameter('textFieldName', itemIndex) as string;
-						const textContent = this.getNodeParameter('textContent', itemIndex) as string;
-
-						// Add text to document
-						document[textFieldName] = textContent;
-					}
-
-					// Merge metadata into document.metadata if requested
-					const addMetadata = this.getNodeParameter('addMetadata', itemIndex, false) as boolean;
-					if (addMetadata) {
-						const metadataCollection = this.getNodeParameter('metadata', itemIndex, {}) as {
-							pairs?: Array<{ key?: string; value?: any }>;
-						};
-						const pairs = metadataCollection.pairs || [];
-						const metadataObj: Record<string, any> = {};
-						for (const pair of pairs) {
-							if (pair && pair.key) {
-								metadataObj[pair.key] = pair.value;
-							}
+						// Use batch embedding if available (embedDocuments), otherwise fall back to individual embeddings
+						if (typeof aiData.embedDocuments === 'function') {
+							embeddings = await aiData.embedDocuments(textsToEmbed);
+						} else if (typeof aiData.embedQuery === 'function') {
+							// Fallback: embed one by one if batch method not available
+							embeddings = await Promise.all(textsToEmbed.map((text) => aiData.embedQuery(text)));
+						} else {
+							throw new NodeOperationError(
+								this.getNode(),
+								'Embedding model does not support embedQuery or embedDocuments methods.',
+								{ itemIndex },
+							);
 						}
-						// Merge with existing metadata or create new metadata object
-						document.metadata = { ...(document.metadata || {}), ...metadataObj };
 					}
 
-					if (!document.id) {
-						throw new NodeOperationError(this.getNode(), 'Document must contain an "id" field', {
-							itemIndex,
+					// Second pass: add embeddings and text to documents, then upsert
+					let embeddingIndex = 0;
+					for (const item of documentsToProcess) {
+						const { document, itemIndex: currentItemIndex } = item;
+
+						// Add embedding if enabled
+						if (item.addEmbedding && item.vectorFieldName) {
+							document[item.vectorFieldName] = embeddings[embeddingIndex];
+							embeddingIndex++;
+						}
+
+						// Add text if enabled
+						if (item.addText && item.textFieldName) {
+							document[item.textFieldName] = item.textContent;
+						}
+
+						// Get container properties to determine partition key path
+						const containerDef = await container.read();
+						const partitionKeyPath =
+							containerDef.resource?.partitionKey?.paths?.[0]?.replace('/', '') || 'id';
+
+						// Validate partition key field exists and has a non-empty value
+						const hasPkField = Object.prototype.hasOwnProperty.call(document, partitionKeyPath);
+						if (!hasPkField) {
+							throw new NodeOperationError(
+								this.getNode(),
+								`Document must include the partition key field '${partitionKeyPath}'. Add this field to your document.`,
+								{ itemIndex: currentItemIndex },
+							);
+						}
+
+						const pkValue = (document as any)[partitionKeyPath];
+						const isEmptyString = typeof pkValue === 'string' && pkValue.trim() === '';
+						if (pkValue === undefined || pkValue === null || isEmptyString) {
+							throw new NodeOperationError(
+								this.getNode(),
+								`Partition key '${partitionKeyPath}' must have a non-empty value when creating or updating an item.`,
+								{ itemIndex: currentItemIndex },
+							);
+						}
+
+						// Upsert the document (create or replace)
+						const { resource } = await container.items.upsert(document);
+
+						returnData.push({
+							json: resource || document,
+							pairedItem: currentItemIndex,
 						});
 					}
-					// Get container properties to determine partition key path
-					const containerDef = await container.read();
-					const partitionKeyPath =
-						containerDef.resource?.partitionKey?.paths?.[0]?.replace('/', '') || 'id';
 
-					// Validate partition key field exists and has a non-empty value
-					const hasPkField = Object.prototype.hasOwnProperty.call(document, partitionKeyPath);
-					if (!hasPkField) {
-						throw new NodeOperationError(
-							this.getNode(),
-							`Document must include the partition key field '${partitionKeyPath}'. Add this field to your document.`,
-							{ itemIndex },
-						);
-					}
-
-					const pkValue = (document as any)[partitionKeyPath];
-					const isEmptyString = typeof pkValue === 'string' && pkValue.trim() === '';
-					if (pkValue === undefined || pkValue === null || isEmptyString) {
-						throw new NodeOperationError(
-							this.getNode(),
-							`Partition key '${partitionKeyPath}' must have a non-empty value when creating or updating an item.`,
-							{ itemIndex },
-						);
-					}
-
-					// Upsert the document (create or replace)
-					const { resource } = await container.items.upsert(document);
-
-					returnData.push({
-						json: resource || document,
-						pairedItem: itemIndex,
-					});
+					// Skip ahead since we processed multiple items
+					itemIndex += documentsToProcess.length - 1;
 				} else if (operation === 'hybridSearch') {
 					// HYBRID SEARCH operation - RRF combining full-text and vector search
 					const keyword = this.getNodeParameter('keyword', itemIndex) as string;
@@ -1636,14 +1944,13 @@ export class CosmosDb implements INodeType {
 						.fetchAll();
 					const values = (resources as any[]).filter(
 						(v) => typeof v === 'string' || typeof v === 'number',
-					);
+					) as Array<string | number>;
 					const f = (filter || '').toLowerCase();
 					return {
 						results: values
-							.map((v) => String(v))
-							.filter((v) => !f || v.toLowerCase().includes(f))
-							.slice(0, 200)
-							.map((v) => ({ name: v, value: v })),
+							.map((v) => ({ name: String(v), value: v }))
+							.filter((kv) => !f || kv.name.toLowerCase().includes(f))
+							.slice(0, 200),
 					};
 				} catch (error) {
 					throw new NodeOperationError(
