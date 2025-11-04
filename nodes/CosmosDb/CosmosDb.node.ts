@@ -40,6 +40,17 @@ export class CosmosDb implements INodeType {
 		],
 		properties: [
 			{
+				displayName: 'Resource',
+				name: 'resource',
+				type: 'options',
+				noDataExpression: true,
+				options: [
+					{ name: 'Item', value: 'item' },
+					{ name: 'Container', value: 'container' },
+				],
+				default: 'item',
+			},
+			{
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
@@ -71,7 +82,51 @@ export class CosmosDb implements INodeType {
 						action: 'Hybrid search documents',
 					},
 				],
+				displayOptions: {
+					show: {
+						resource: ['item'],
+					},
+				},
 				default: 'select',
+			},
+			// Operation selector for Container resource
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				options: [
+					{
+						name: 'Create',
+						value: 'createContainer',
+						description: 'Create a new container in a database',
+						action: 'Create container',
+					},
+					{
+						name: 'Get',
+						value: 'getContainer',
+						description: 'Retrieve a container definition',
+						action: 'Get container',
+					},
+					{
+						name: 'Get Many',
+						value: 'getManyContainers',
+						description: 'List containers in a database',
+						action: 'Get many containers',
+					},
+					{
+						name: 'Delete',
+						value: 'deleteContainer',
+						description: 'Delete a container from a database',
+						action: 'Delete container',
+					},
+				],
+				displayOptions: {
+					show: {
+						resource: ['container'],
+					},
+				},
+				default: 'createContainer',
 			},
 			{
 				displayName: 'Database Name or ID',
@@ -84,6 +139,11 @@ export class CosmosDb implements INodeType {
 				required: true,
 				description:
 					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+					},
+				},
 			},
 			{
 				displayName: 'Container Name or ID',
@@ -97,6 +157,11 @@ export class CosmosDb implements INodeType {
 				required: true,
 				description:
 					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+					},
+				},
 			},
 			// Delete operation fields
 			{
@@ -107,6 +172,7 @@ export class CosmosDb implements INodeType {
 				default: { mode: 'list', value: '' },
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['delete'],
 					},
 				},
@@ -139,6 +205,7 @@ export class CosmosDb implements INodeType {
 				description: 'Partition key value for the item to delete',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['delete'],
 					},
 				},
@@ -173,6 +240,7 @@ export class CosmosDb implements INodeType {
 				description: 'The SQL query to execute against the container',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['select'],
 					},
 				},
@@ -185,6 +253,7 @@ export class CosmosDb implements INodeType {
 				description: 'Whether to return all results or only up to a given limit',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['select'],
 					},
 				},
@@ -200,6 +269,7 @@ export class CosmosDb implements INodeType {
 				},
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['select'],
 						returnAll: [false],
 					},
@@ -215,6 +285,7 @@ export class CosmosDb implements INodeType {
 					'Whether to exclude internal Cosmos DB fields (_rid, _self, _etag, _attachments, _ts)',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['select'],
 					},
 				},
@@ -227,6 +298,7 @@ export class CosmosDb implements INodeType {
 				description: 'Whether to exclude additional specific fields from the results',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['select'],
 					},
 				},
@@ -240,6 +312,7 @@ export class CosmosDb implements INodeType {
 				description: 'Comma-separated list of field names to exclude from results',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['select'],
 						excludeFields: [true],
 					},
@@ -255,6 +328,7 @@ export class CosmosDb implements INodeType {
 					'The JSON document to upsert. Must include an "ID" field and the partition key field defined in your container.',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['upsert'],
 					},
 				},
@@ -267,6 +341,7 @@ export class CosmosDb implements INodeType {
 				description: 'Whether to generate and add an embedding vector to the document',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['upsert'],
 					},
 				},
@@ -281,6 +356,7 @@ export class CosmosDb implements INodeType {
 				description: 'The field name where the embedding vector will be stored',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['upsert'],
 						addEmbedding: [true],
 					},
@@ -297,6 +373,7 @@ export class CosmosDb implements INodeType {
 					'The text content to generate embedding for. You can use expressions to reference document fields.',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['upsert'],
 						addEmbedding: [true],
 					},
@@ -310,6 +387,7 @@ export class CosmosDb implements INodeType {
 				description: 'Whether to add a text field to the document',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['upsert'],
 					},
 				},
@@ -324,6 +402,7 @@ export class CosmosDb implements INodeType {
 				description: 'The field name where the text content will be stored',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['upsert'],
 						addText: [true],
 					},
@@ -340,6 +419,7 @@ export class CosmosDb implements INodeType {
 					'The text content to add to the document. You can use expressions to reference other fields.',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['upsert'],
 						addText: [true],
 					},
@@ -354,6 +434,7 @@ export class CosmosDb implements INodeType {
 					'Whether to add metadata key/value pairs that will be merged into document.metadata',
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['upsert'],
 					},
 				},
@@ -369,6 +450,7 @@ export class CosmosDb implements INodeType {
 				default: {},
 				displayOptions: {
 					show: {
+						resource: ['item'],
 						operation: ['upsert'],
 						addMetadata: [true],
 					},
@@ -398,6 +480,271 @@ export class CosmosDb implements INodeType {
 					},
 				],
 				description: 'Key-value pairs to add to the document metadata field',
+			},
+
+			// Container resource: create container
+			{
+				displayName: 'Database Name or ID',
+				name: 'databaseNameForCreate',
+				type: 'options',
+				typeOptions: {
+					loadOptionsMethod: 'getDatabases',
+				},
+				default: '',
+				required: true,
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+					},
+				},
+			},
+			{
+				displayName: 'Container Name',
+				name: 'newContainerName',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: 'Enter container name',
+				description: 'Name for the new container',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+					},
+				},
+			},
+			{
+				displayName: 'Partition Key Path',
+				name: 'partitionKeyPath',
+				type: 'string',
+				default: '/category',
+				required: true,
+				placeholder: '/category',
+				description: 'Partition key path for the new container (must start with /)',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+					},
+				},
+			},
+			{
+				displayName: 'Add Vector Policy',
+				name: 'addVectorPolicy',
+				type: 'boolean',
+				default: false,
+				description: 'Whether to enable vector search on this container',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+					},
+				},
+			},
+			{
+				displayName: 'Vector Path',
+				name: 'vectorPath',
+				type: 'string',
+				default: '/vector',
+				required: true,
+				placeholder: '/vector',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+						addVectorPolicy: [true],
+					},
+				},
+				description: 'Path of the vector field (must start with /)',
+			},
+			{
+				displayName: 'Vector Data Type',
+				name: 'vectorDataType',
+				type: 'options',
+				default: 'float32',
+				options: [
+					{ name: 'Float32', value: 'float32' },
+					{ name: 'Float16', value: 'float16' },
+					{ name: 'Int8', value: 'int8' },
+				],
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+						addVectorPolicy: [true],
+					},
+				},
+				description: 'Vector embedding data type',
+			},
+			{
+				displayName: 'Distance Function',
+				name: 'vectorDistanceFunction',
+				type: 'options',
+				default: 'cosine',
+				options: [
+					{ name: 'Cosine', value: 'cosine' },
+					{ name: 'Euclidean', value: 'euclidean' },
+					{ name: 'Dot Product', value: 'dotProduct' },
+				],
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+						addVectorPolicy: [true],
+					},
+				},
+				description: 'Distance function used for vector similarity',
+			},
+			{
+				displayName: 'Dimensions',
+				name: 'vectorDimensions',
+				type: 'number',
+				default: 1536,
+				required: true,
+				description: 'Number of dimensions in the vector embeddings',
+				typeOptions: {
+					minValue: 1,
+					maxValue: 65535,
+				},
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+						addVectorPolicy: [true],
+					},
+				},
+			},
+			{
+				displayName: 'Index Type',
+				name: 'vectorIndexType',
+				type: 'options',
+				default: 'diskANN',
+				options: [
+					{ name: 'diskANN', value: 'diskANN' },
+					{ name: 'quantizedFlat', value: 'quantizedFlat' },
+				],
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+						addVectorPolicy: [true],
+					},
+				},
+				description: 'Vector index type for the container',
+			},
+			{
+				displayName: 'Add Full Text Search Policy',
+				name: 'addFullTextPolicy',
+				type: 'boolean',
+				default: false,
+				description: 'Whether to enable full text search on this container',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+					},
+				},
+			},
+			{
+				displayName: 'Full Text Path',
+				name: 'fullTextPath',
+				type: 'string',
+				default: '/text',
+				required: true,
+				placeholder: '/text',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['createContainer'],
+						addFullTextPolicy: [true],
+					},
+				},
+				description: 'Path of the text field to enable for full-text search',
+			},
+			// Container resource: get/delete container
+			{
+				displayName: 'Database Name or ID',
+				name: 'databaseNameForContainer',
+				type: 'options',
+				typeOptions: {
+					loadOptionsMethod: 'getDatabases',
+				},
+				default: '',
+				required: true,
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['getContainer', 'deleteContainer', 'getManyContainers'],
+					},
+				},
+			},
+			{
+				displayName: 'Container Name or ID',
+				name: 'containerNameForContainer',
+				type: 'options',
+				typeOptions: {
+					loadOptionsDependsOn: ['databaseNameForContainer'],
+					loadOptionsMethod: 'getContainersForContainerOps',
+				},
+				default: '',
+				required: true,
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['getContainer', 'deleteContainer'],
+					},
+				},
+			},
+			{
+				displayName: 'Return All',
+				name: 'containersReturnAll',
+				type: 'boolean',
+				default: true,
+				description: 'Whether to return all containers or only up to a given limit',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['getManyContainers'],
+					},
+				},
+			},
+			{
+				displayName: 'Limit',
+				name: 'containersLimit',
+				type: 'number',
+				default: 50,
+				placeholder: '50',
+				typeOptions: {
+					minValue: 1,
+				},
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['getManyContainers'],
+						containersReturnAll: [false],
+					},
+				},
+				description: 'Max number of containers to return',
+			},
+			{
+				displayName: 'Simplify Output',
+				name: 'simplifyContainerOutput',
+				type: 'boolean',
+				default: true,
+				description: 'Whether to return a simplified shape with common fields',
+				displayOptions: {
+					show: {
+						resource: ['container'],
+						operation: ['getContainer', 'getManyContainers'],
+					},
+				},
 			},
 			// Hybrid Search parameters
 			{
@@ -528,12 +875,128 @@ export class CosmosDb implements INodeType {
 
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			try {
+				const resource = this.getNodeParameter('resource', itemIndex) as 'item' | 'container';
 				const operation = this.getNodeParameter('operation', itemIndex) as string;
-				const databaseName = this.getNodeParameter('databaseName', itemIndex) as string;
-				const containerName = this.getNodeParameter('containerName', itemIndex) as string;
+
+				// Resolve DB/container context for item resource operations (scoped per branch below for container resource)
+				const databaseName =
+					resource === 'item'
+						? (this.getNodeParameter('databaseName', itemIndex) as string)
+						: (this.getNodeParameter('databaseNameForCreate', itemIndex, '') as string);
+				const containerName =
+					resource === 'item' ? (this.getNodeParameter('containerName', itemIndex) as string) : '';
 
 				const database = client.database(databaseName);
-				const container = database.container(containerName);
+				const container = containerName ? database.container(containerName) : (undefined as any);
+
+				if (resource === 'container' && operation === 'createContainer') {
+					// Validate new container name
+					const newContainerName = this.getNodeParameter('newContainerName', itemIndex) as string;
+					const trimmedName = (newContainerName || '').trim();
+					if (!trimmedName) {
+						throw new NodeOperationError(this.getNode(), 'Container name is required', {
+							itemIndex,
+						});
+					}
+					// Enforce allowed characters and length (letters, numbers, hyphens, underscores)
+					if (trimmedName.length > 255) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Container name must be 1–255 characters long',
+							{ itemIndex },
+						);
+					}
+					if (!/^[A-Za-z0-9_-]+$/.test(trimmedName)) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Container name can only contain letters, numbers, hyphens (-), and underscores (_).',
+							{ itemIndex },
+						);
+					}
+
+					let partitionKeyPath = this.getNodeParameter(
+						'partitionKeyPath',
+						itemIndex,
+						'/category',
+					) as string;
+					partitionKeyPath = partitionKeyPath.startsWith('/')
+						? partitionKeyPath
+						: `/${partitionKeyPath}`;
+
+					const addVectorPolicy = this.getNodeParameter(
+						'addVectorPolicy',
+						itemIndex,
+						false,
+					) as boolean;
+					const addFullTextPolicy = this.getNodeParameter(
+						'addFullTextPolicy',
+						itemIndex,
+						false,
+					) as boolean;
+
+					const containerDef: any = {
+						id: trimmedName,
+						partitionKey: { paths: [partitionKeyPath], kind: 'Hash' },
+					};
+
+					if (addVectorPolicy) {
+						let vectorPath = this.getNodeParameter('vectorPath', itemIndex, '/vector') as string;
+						vectorPath = vectorPath.startsWith('/') ? vectorPath : `/${vectorPath}`;
+						const vectorDataType = this.getNodeParameter(
+							'vectorDataType',
+							itemIndex,
+							'float32',
+						) as string;
+						const vectorDistanceFunction = this.getNodeParameter(
+							'vectorDistanceFunction',
+							itemIndex,
+							'cosine',
+						) as string;
+						const vectorDimensions = this.getNodeParameter(
+							'vectorDimensions',
+							itemIndex,
+							1536,
+						) as number;
+						const vectorIndexType = this.getNodeParameter(
+							'vectorIndexType',
+							itemIndex,
+							'diskANN',
+						) as string;
+
+						containerDef.vectorEmbeddingPolicy = {
+							vectorEmbeddings: [
+								{
+									path: vectorPath,
+									dataType: vectorDataType,
+									distanceFunction: vectorDistanceFunction,
+									dimensions: vectorDimensions,
+								},
+							],
+						};
+						containerDef.indexingPolicy = {
+							...(containerDef.indexingPolicy || {}),
+							vectorIndexes: [
+								{
+									path: vectorPath,
+									type: vectorIndexType,
+								},
+							],
+						};
+					}
+
+					if (addFullTextPolicy) {
+						let fullTextPath = this.getNodeParameter('fullTextPath', itemIndex, '/text') as string;
+						fullTextPath = fullTextPath.startsWith('/') ? fullTextPath : `/${fullTextPath}`;
+						containerDef.fullTextPolicy = {
+							defaultLanguage: 'en-US',
+							paths: [fullTextPath],
+						};
+					}
+
+					const { resource: created } = await database.containers.create(containerDef);
+					returnData.push({ json: (created as any) || { id: trimmedName }, pairedItem: itemIndex });
+					continue;
+				}
 
 				if (operation === 'select') {
 					// SELECT operation
@@ -853,6 +1316,96 @@ export class CosmosDb implements INodeType {
 						},
 						pairedItem: itemIndex,
 					});
+				} else if (resource === 'container' && operation === 'getContainer') {
+					// GET CONTAINER operation
+					const dbName = this.getNodeParameter('databaseNameForContainer', itemIndex) as string;
+					const contName = this.getNodeParameter('containerNameForContainer', itemIndex) as string;
+
+					if (!dbName || !contName) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Database and container are required to get container details',
+							{ itemIndex },
+						);
+					}
+
+					const db = client.database(dbName);
+					const cont = db.container(contName);
+					const { resource: contDef } = await cont.read();
+					const simplify = this.getNodeParameter(
+						'simplifyContainerOutput',
+						itemIndex,
+						true,
+					) as boolean;
+					const output = simplify
+						? {
+								id: contDef?.id,
+								partitionKeyPaths: contDef?.partitionKey?.paths,
+								indexingMode: contDef?.indexingPolicy?.indexingMode,
+							}
+						: contDef;
+					returnData.push({ json: (output as any) || { id: contName }, pairedItem: itemIndex });
+				} else if (resource === 'container' && operation === 'deleteContainer') {
+					// DELETE CONTAINER operation
+					const dbName = this.getNodeParameter('databaseNameForContainer', itemIndex) as string;
+					const contName = this.getNodeParameter('containerNameForContainer', itemIndex) as string;
+
+					if (!dbName || !contName) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Database and container are required to delete a container',
+							{ itemIndex },
+						);
+					}
+
+					const db = client.database(dbName);
+					const cont = db.container(contName);
+					const response = await cont.delete();
+					returnData.push({
+						json: {
+							id: contName,
+							statusCode: response.statusCode,
+							deleted: response.statusCode >= 200 && response.statusCode < 300,
+						},
+						pairedItem: itemIndex,
+					});
+				} else if (resource === 'container' && operation === 'getManyContainers') {
+					// GET MANY CONTAINERS operation
+					const dbName = this.getNodeParameter('databaseNameForContainer', itemIndex) as string;
+					const returnAll = this.getNodeParameter(
+						'containersReturnAll',
+						itemIndex,
+						true,
+					) as boolean;
+					const limit = this.getNodeParameter('containersLimit', itemIndex, 50) as number;
+					const simplify = this.getNodeParameter(
+						'simplifyContainerOutput',
+						itemIndex,
+						true,
+					) as boolean;
+
+					if (!dbName) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Database is required to list containers',
+							{ itemIndex },
+						);
+					}
+
+					const db = client.database(dbName);
+					const iterator = db.containers.readAll();
+					const { resources } = await iterator.fetchAll();
+					const list = returnAll ? resources : resources.slice(0, limit);
+					for (const c of list) {
+						const shaped = simplify
+							? {
+									id: (c as any).id,
+									partitionKeyPaths: (c as any).partitionKey?.paths,
+									indexingMode: (c as any).indexingPolicy?.indexingMode,
+								}
+							: c;
+						returnData.push({ json: shaped as any, pairedItem: itemIndex });
+					}
 				}
 			} catch (error) {
 				if (this.continueOnFail()) {
@@ -903,6 +1456,35 @@ export class CosmosDb implements INodeType {
 				const endpoint = credentials.endpoint as string;
 				const key = credentials.key as string;
 				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
+
+				if (!databaseName) {
+					return [];
+				}
+
+				const client = new CosmosClient({ endpoint, key });
+
+				try {
+					const database = client.database(databaseName);
+					const { resources } = await database.containers.readAll().fetchAll();
+					return resources.map((container: any) => ({
+						name: container.id,
+						value: container.id,
+					}));
+				} catch (error) {
+					throw new NodeOperationError(
+						this.getNode(),
+						`Failed to load containers: ${error.message}`,
+					);
+				}
+			},
+
+			async getContainersForContainerOps(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
+				const credentials = await this.getCredentials('cosmosDbApi');
+				const endpoint = credentials.endpoint as string;
+				const key = credentials.key as string;
+				const databaseName = this.getCurrentNodeParameter('databaseNameForContainer') as string;
 
 				if (!databaseName) {
 					return [];
