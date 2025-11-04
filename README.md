@@ -1,4 +1,4 @@
-# HKU Cosmos DB Custom Node for n8n
+# Cosmos DB Custom Node for n8n
 
 A custom n8n node for interacting with Azure Cosmos DB, featuring vector search capabilities, AI embedding integration, and hybrid search using Reciprocal Rank Fusion (RRF).
 
