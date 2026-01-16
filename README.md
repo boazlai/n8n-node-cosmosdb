@@ -1,65 +1,77 @@
-# Cosmos DB Custom Node for n8n
+# n8n-nodes-cosmosdb
 
-A custom n8n node for interacting with Azure Cosmos DB, featuring vector search capabilities, AI embedding integration, and hybrid search using Reciprocal Rank Fusion (RRF).
+Connect Azure Cosmos DB to your n8n workflows with advanced search capabilities including vector search, full-text search, and hybrid search using Reciprocal Rank Fusion (RRF).
 
-## Overview
+## Features
 
-This custom node provides three main operations for working with Azure Cosmos DB:
+✨ **Complete Document Management** - Query, create, update, and delete documents with ease
 
-1. **Select** - Query documents using SQL
-2. **Create or Update** - Upsert documents with optional embeddings and metadata
-3. **Hybrid Search** - Advanced search combining full-text and vector similarity using RRF
+🔍 **Hybrid Search** - Combine keyword search and AI-powered semantic search for superior results
 
-## Architecture
+🤖 **AI Integration** - Automatic embedding generation with support for OpenAI, Azure OpenAI, and other embedding models
 
-### Core Components
+⚡ **Batch Processing** - Efficiently process multiple documents with batch embedding support
 
-#### 1. Credentials (`HkuCosmosDbCredentialsApi.credentials.ts`)
+📦 **Container Management** - Create and manage containers with vector and full-text search policies
 
-Manages Azure Cosmos DB connection credentials:
+🛠️ **AI Agent Ready** - Works seamlessly as a tool for AI Agent workflows
 
-- **Endpoint**: Your Cosmos DB account URI
-- **Key**: Primary or secondary key for authentication
+## What You Can Do
 
-#### 2. Main Node (`HkuCosmosDbNode.node.ts`)
+### Work with Documents (Item Operations)
 
-The primary node implementation with the following structure:
+- **Select** - Query documents using SQL
+- **Create or Update** - Insert or update documents with automatic embedding generation
+- **Hybrid Search** - Search using both keywords and semantic similarity
+- **Set** - Update specific fields without replacing the entire document
+- **Add** - Add new fields to existing documents
+- **Delete** - Remove documents by ID
 
-**Inputs:**
+### Manage Containers
 
-- **Main Input**: Standard n8n workflow data
-- **Embedding Input** (Optional): Connection to an AI embedding model (OpenAI, Azure OpenAI, etc.)
+- **Create** - Set up containers with vector and full-text search indexes
+- **Get** - Retrieve container configuration
+- **Get Many** - List all containers in a database
+- **Delete** - Remove containers
 
-**Outputs:**
+## Quick Start
 
-- **Main Output**: Query results or operation confirmations
+### Installation
 
-### How It Works
-
-## Operation 1: Select
-
-Executes SQL queries against your Cosmos DB container.
-
-### Key Features:
-
-- **SQL Query**: Write custom SQL queries to retrieve documents
-- **Result Limiting**: Option to return all results or limit to a specific number
-- **Simplify Output**: Automatically removes Cosmos DB internal fields (`_rid`, `_self`, `_etag`, `_attachments`, `_ts`)
-- **Exclude Fields**: Custom field exclusion to reduce payload size
-
-### Code Flow:
-
-```typescript
-1. Parse SQL query from parameters
-2. Connect to Cosmos DB using SDK client
-3. Execute query: container.items.query(sqlQuery).fetchAll()
-4. Process results:
-   - Remove internal fields if simplifyOutput enabled
-   - Remove custom fields if excludeFields enabled
-5. Return processed documents
+```bash
+npm install n8n-nodes-cosmosdb
 ```
 
-### Example Use Case:
+### Configuration
+
+1. **Add Credentials** in n8n:
+   - Create a new "Cosmos DB API" credential
+   - Enter your Azure Cosmos DB **Endpoint** (e.g., `https://your-account.documents.azure.com:443/`)
+   - Enter your **Primary Key** or **Secondary Key**
+
+2. **Add the Node** to your workflow:
+   - Search for "Cosmos DB" in the n8n node panel
+   - Drag it into your workflow
+
+3. **(Optional) Connect an Embedding Model**:
+   - Add an OpenAI Embeddings node (or Azure OpenAI, etc.)
+   - Connect it to the "Embedding" input of the Cosmos DB node
+   - Required for Hybrid Search and automatic embedding generation
+
+## Operations Guide
+
+### Select Documents
+
+Query your Cosmos DB container using standard SQL syntax.
+
+**What you can do:**
+
+- Write custom SQL queries to filter and retrieve documents
+- Limit results to a specific number
+- Automatically clean up internal Cosmos DB fields
+- Exclude specific fields to reduce payload size
+
+**Example:**
 
 ```sql
 SELECT * FROM c WHERE c.category = 'research' ORDER BY c._ts DESC
@@ -67,308 +79,225 @@ SELECT * FROM c WHERE c.category = 'research' ORDER BY c._ts DESC
 
 ---
 
-## Operation 2: Create or Update (Upsert)
+### Create or Update Documents
 
-Inserts or updates documents in Cosmos DB with intelligent field additions.
+Insert new documents or update existing ones with automatic embedding generation.
 
-### Key Features:
+**What you can do:**
 
-- **JSON Document Input**: Accepts JSON documents with required `id` and partition key fields
-- **Add Embedding**: Automatically generate and add vector embeddings using connected AI model
-- **Add Text**: Add text content to a specified field
-- **Add Metadata**: Merge custom metadata into the document
+- Upsert documents using JSON input (requires `id` and partition key)
+- Automatically generate AI embeddings when connected to an embedding model
+- Process multiple documents efficiently with batch embedding support
+- Add custom text fields and metadata to documents
 
-### Code Flow:
+**Batch Processing Benefits:**
 
-```typescript
-1. Parse JSON document from input
-2. Validate document structure (id field required)
+- Faster performance with parallel embedding generation
+- Lower costs with fewer API calls
+- Efficient handling of multiple documents
 
-3. IF "Add Embedding" enabled:
-   - Get text content to embed
-   - Connect to AI embedding model via NodeConnectionTypes.AiEmbedding
-   - Generate embedding: await aiData.embedQuery(textToEmbed)
-   - Add vector to document: document[vectorFieldName] = embedding
+**Example:**
 
-4. IF "Add Text" enabled:
-   - Get text content from parameters
-   - Add to document: document[textFieldName] = textContent
-
-5. IF "Add Metadata" enabled:
-   - Parse metadata key-value pairs
-   - Merge into document.metadata object
-
-6. Validate partition key field exists
-7. Execute upsert: container.items.upsert(document)
-8. Return created/updated document
-```
-
-### Why This Matters:
-
-- **Embeddings**: Enables vector similarity search by converting text to high-dimensional vectors
-- **Text Field**: Stores original text alongside embeddings for retrieval and display
-- **Metadata**: Adds structured metadata without modifying main document structure
-
-### Example Workflow:
-
-```
-Input Document:
+```json
+Input:
 {
   "id": "doc-123",
   "category": "AI",
   "title": "Machine Learning Basics"
 }
 
-With "Add Text" enabled (field: "text", content: "Introduction to ML"):
-With "Add Embedding" enabled (field: "vector", text: "Introduction to ML"):
-
-Output Document:
+With automatic embedding enabled:
 {
   "id": "doc-123",
   "category": "AI",
   "title": "Machine Learning Basics",
   "text": "Introduction to ML",
-  "vector": [0.123, -0.456, 0.789, ...] // 1536-dimensional vector
+  "vector": [0.123, -0.456, 0.789, ...]
 }
 ```
 
 ---
 
-## Operation 3: Hybrid Search
+### Hybrid Search
 
-Advanced search combining full-text search and vector similarity using Reciprocal Rank Fusion (RRF).
+Combine keyword and AI-powered semantic search for superior results using Reciprocal Rank Fusion (RRF).
 
-### What is RRF?
+**What is RRF?**
+RRF combines two ranking methods to give you the best of both worlds:
 
-Reciprocal Rank Fusion is a technique that combines multiple ranking signals:
+- **Keyword matching** - Find documents with specific terms
+- **Semantic similarity** - Find documents with similar meaning
 
-- **Full-Text Search**: Traditional keyword matching using `FullTextScore()`
-- **Vector Search**: Semantic similarity using `VectorDistance()`
+**What you can do:**
 
-RRF formula: `RRF_score = 1/(k + rank)` for each ranking method, then sum the scores.
+- Search by keywords and natural language queries simultaneously
+- Filter results using custom SQL conditions
+- Select specific fields to return (reduces response size)
+- Control the number of results (Top K)
+- Filter by partition key for faster queries
 
-### Key Features:
-
-- **Keyword Search**: Full-text search on indexed text fields
-- **Semantic Search**: Vector similarity search using AI embeddings
-- **Top K Results**: Control number of results returned
-- **Partition Key Filtering**: Optional filtering by partition key
-- **Simplify/Exclude Fields**: Control output format
-
-### Code Flow:
-
-```typescript
-1. Get search parameters (keyword, searchQuery, topK)
-
-2. Connect to AI embedding model
-   - Validate connection exists
-   - Generate embedding for search query: await aiData.embedQuery(searchQuery)
-
-3. Build RRF SQL query:
-   - Escape special characters in keyword
-   - Convert embedding array to SQL literal: [0.1, 0.2, ...]
-   - Construct query:
-     SELECT TOP ${topK} * FROM c
-     ORDER BY RANK RRF(
-       FullTextScore(c.text, '${keywords}'),
-       VectorDistance(c.vector, ${embeddingArray})
-     )
-
-4. Add partition key filter if specified:
-   WHERE c.${partitionKeyField} = '${partitionKeyValue}'
-
-5. Execute query via Cosmos SDK: container.items.query(rrfQuery).fetchAll()
-
-6. Process results:
-   - Remove internal fields if simplifyOutput enabled
-   - Remove custom fields if excludeFields enabled
-
-7. Return ranked results
-```
-
-### Why Direct SQL Execution?
-
-Previously, this node used Azure Functions to execute RRF queries. Now it uses **inline SQL with embedding literals**:
-
-**Advantages:**
-
-- ✅ No external dependencies (no Function App needed)
-- ✅ Lower latency (direct SDK call)
-- ✅ Reduced costs (no Function App hosting)
-- ✅ Simpler architecture
-
-**How It Works:**
-The embedding vector is directly embedded in the SQL query as an array literal:
-
-```sql
-SELECT TOP 10 * FROM c
-ORDER BY RANK RRF(
-  FullTextScore(c.text, 'machine learning'),
-  VectorDistance(c.vector, [0.123, -0.456, 0.789, ...])
-)
-```
-
-### Example Search:
+**Example:**
 
 ```
 Keyword: "machine learning"
-Search Query: "What is neural network?"
-Top K: 10
+Search Query: "What is a neural network?"
+Filters: c.published = true AND c.year > 2020
+Fields: id, title, summary
+Top Results: 10
 
-Result: Documents ranked by combined relevance of:
-1. Keyword match with "machine learning"
-2. Semantic similarity to "What is neural network?"
+Returns: Top 10 documents ranked by:
+  ✓ Keyword relevance to "machine learning"
+  ✓ Semantic similarity to "What is a neural network?"
+  ✓ Pre-filtered for published docs from 2021+
+  ✓ Only id, title, and summary fields included
 ```
 
 ---
 
-## AI Agent Tool Integration
+### Update Specific Fields (Set)
 
-This node is designed to work as an **AI Agent Tool** in n8n workflows.
+Modify specific fields in a document without replacing the entire document.
 
-### Key Implementation Details:
+**What you can do:**
 
-#### Static vs Dynamic Inputs
+- Update individual fields using JSON Pointer paths (e.g., `/status`, `/metadata/priority`)
+- Modify nested fields at any depth
+- Automatically handle different data types
 
-```typescript
-// ✅ CORRECT - Static inputs (works as tool)
-inputs: [
-	NodeConnectionTypes.Main,
-	{
-		displayName: 'Embedding',
-		type: NodeConnectionTypes.AiEmbedding,
-		required: false,
-		maxConnections: 1,
-	},
-];
-
-// ❌ WRONG - Dynamic inputs (breaks tool registration)
-inputs: `={{...}}`; // Template expressions don't work for tools
-```
-
-**Why Static?**
-
-- AI Agent tools are registered at startup, not runtime
-- n8n needs to know connection types before workflow execution
-- Static inputs with `required: false` provide flexibility
-
-#### Connection Retrieval
-
-```typescript
-// Correct way to get embedding connection
-const aiData = (await this.getInputConnectionData(NodeConnectionTypes.AiEmbedding, 0)) as {
-	embedQuery: (query: string) => Promise<number[]>;
-};
-```
-
-#### Tool Enablement
-
-```typescript
-usableAsTool: true, // Enables node as AI Agent tool
-```
-
-### Workflow Example:
+**Example:**
 
 ```
-AI Agent → HKU Cosmos DB (Tool) → Connected Embedding Model
-         ↓
-    User Query
-         ↓
-Agent decides to search knowledge base
-         ↓
-Calls HKU Cosmos DB hybrid search with query
-         ↓
-Embedding model generates vector
-         ↓
-RRF search executed
-         ↓
-Results returned to Agent
-         ↓
-Agent formulates response
+Document ID: "doc-123"
+Update: /status → "published"
+        /metadata/reviewedBy → "John Doe"
+        /priority → 5
 ```
 
 ---
 
-## Technical Details
+### Add New Fields
 
-### Dependencies
+Add new properties to existing documents without affecting other fields.
 
-```json
-{
-	"@azure/cosmos": "^4.x",
-	"n8n-workflow": "^1.x"
-}
+**What you can do:**
+
+- Insert new fields at any level
+- Add arrays, objects, or simple values
+- Preserve existing document structure
+
+**Example:**
+
 ```
-
-### Connection Types
-
-- `NodeConnectionTypes.Main`: Standard workflow data flow
-- `NodeConnectionTypes.AiEmbedding`: AI embedding model connections (OpenAI, Azure OpenAI, etc.)
-- `NodeConnectionTypes.AiTool`: Enables use as AI Agent tool
-
-### Error Handling
-
-The node implements comprehensive error handling:
-
-- **Invalid JSON**: Validates document parsing in upsert operation
-- **Missing ID**: Ensures documents have required `id` field
-- **Missing Partition Key**: Validates partition key field exists
-- **No Embedding Model**: Checks for connected embedding model when required
-- **SQL Injection Protection**: Escapes special characters in queries
-
-### Input Sanitization
-
-```typescript
-// Double quote escaping for FullTextScore
-const escapeDoubleQuotes = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-
-// Single quote escaping for partition key values
-const escapeSingleQuotes = (s: string) => s.replace(/'/g, "''");
+Document ID: "doc-123"
+Add: /tags → ["AI", "ML", "Research"]
+     /metadata/lastUpdated → "2026-01-16"
 ```
 
 ---
 
-## Installation
+### Delete Documents
 
-1. Clone this repository to your n8n custom nodes directory:
+Remove documents from your container.
 
-```bash
-~/.n8n/custom/
+**What you need:**
+
+- Document ID
+- Partition key value
+
+**Example:**
+
 ```
-
-2. Install dependencies:
-
-```bash
-cd ~/.n8n/custom/n8n-custom-hkunode
-npm install
+ID: "doc-123"
+Partition Key: "research"
+Result: Document permanently deleted
 ```
-
-3. Restart n8n:
-
-```bash
-n8n start
-```
-
-4. The node will appear in the n8n editor under "HKU Cosmos DB"
 
 ---
 
-## Configuration
+## Container Management
 
-### 1. Set Up Credentials
+### Create Container
 
-- Navigate to Credentials in n8n
-- Create new "HKU Cosmos DB API" credential
-- Enter your Cosmos DB endpoint and key
+Set up new containers with advanced search capabilities.
 
-### 2. Create Container with Vector Index
+**What you can configure:**
 
-Your Cosmos DB container should have:
+- Partition key path
+- Vector search policy (dimensions, distance function, index type)
+- Full-text search policy
+- Data types and indexing options
 
-- **Full-text index** on text fields (for keyword search)
-- **Vector index** on embedding fields (for semantic search)
+**Example:**
 
-Example index policy:
+```
+Container: Documents
+Partition Key: /category
+Vector Search: Enabled (1536 dimensions, cosine similarity)
+Full-Text Search: Enabled on /text field
+```
+
+---
+
+### Get Container
+
+Retrieve container configuration and settings.
+
+**Options:**
+
+- View full container definition
+- Simplified output with key fields only
+
+---
+
+### List All Containers
+
+Get a list of all containers in your database with optional result limiting.
+
+---
+
+### Delete Container
+
+Permanently remove a container and all its documents.
+
+---
+
+## Use as AI Agent Tool
+
+This node works seamlessly with n8n AI Agents, allowing agents to search and retrieve information from your Cosmos DB knowledge base.
+
+**How it works:**
+
+1. Connect the node as a tool to your AI Agent
+2. Connect an embedding model (OpenAI, Azure OpenAI, etc.)
+3. The agent automatically uses hybrid search when needed
+4. Results are returned to the agent for response generation
+
+**Example Workflow:**
+
+```
+User asks: "What are the latest AI research papers?"
+     ↓
+AI Agent decides to search knowledge base
+     ↓
+Calls Cosmos DB hybrid search
+     ↓
+Returns relevant documents
+     ↓
+Agent formulates answer with retrieved context
+```
+
+---
+
+## Container Setup for Hybrid Search
+
+To use hybrid search, your Cosmos DB container needs both vector and full-text indexes:
+
+**Required indexes:**
+
+- Full-text index on text fields (for keyword search)
+- Vector index on embedding fields (for semantic search)
+
+**Example index policy:**
 
 ```json
 {
@@ -384,107 +313,74 @@ Example index policy:
 }
 ```
 
-### 3. Connect Embedding Model
-
-- Add an Embeddings node (OpenAI Embeddings, Azure OpenAI Embeddings, etc.)
-- Connect it to the "Embedding" input of HKU Cosmos DB node
-- Works for both Upsert and Hybrid Search operations
+You can also create containers with the proper indexing policies directly using this node's **Create Container** operation
 
 ---
 
-## Use Cases
+## Common Use Cases
 
-### 1. **Knowledge Base Search**
+**🤖 AI-Powered Knowledge Bases**
 
-- Store documents with text and embeddings
-- Use hybrid search to find relevant information
-- Combine with AI Agent for conversational search
+- Build conversational AI that searches your documents
+- Combine keyword and semantic search for better results
+- Integrate with AI Agents for intelligent assistance
 
-### 2. **Document Management**
+**📚 Document Management Systems**
 
-- Upsert documents with automatic embedding generation
+- Store and organize documents with metadata
 - Query documents using SQL
-- Maintain metadata alongside content
+- Automatically generate and store embeddings
 
-### 3. **Semantic Search Application**
+**🔍 Semantic Search Applications**
 
-- Index content with embeddings
-- Enable natural language search
-- Rank results by relevance (RRF)
+- Enable natural language search across your content
+- Find similar documents using AI embeddings
+- Rank results by combined keyword and semantic relevance
 
-### 4. **AI Agent Tool**
+**⚙️ Workflow Automation**
 
-- Provide knowledge base access to AI agents
-- Enable agents to search and retrieve information
-- Combine multiple data sources in agent workflows
+- Integrate Cosmos DB operations into n8n workflows
+- Process documents with batch operations
+- Trigger workflows based on document changes
 
 ---
 
 ## Troubleshooting
 
-### "No embedding model connected" Error
+**"No embedding model connected"**
 
-**Solution**: Connect an Embeddings node to the "Embedding" input
+- Connect an embedding node (OpenAI, Azure OpenAI, etc.) to the Embedding input
 
-### "Document must include partition key field" Error
+**"Document must include partition key field"**
 
-**Solution**: Ensure your document includes the partition key field defined in your container
+- Ensure your document includes the partition key field configured in your container
+- Check that the field name matches exactly
 
-### "Invalid JSON in Document field" Error
+**"Invalid JSON in Document field"**
 
-**Solution**: Validate your JSON syntax in the Item Content field
+- Validate your JSON syntax
+- Ensure all quotes and brackets are properly closed
 
-### Tool Not Appearing in AI Agent
+**Hybrid search not returning results**
 
-**Solution**: Ensure `usableAsTool: true` is set and inputs are defined as static array (not dynamic template)
-
----
-
-## Development Notes
-
-### File Structure
-
-```
-Hku-CosmosDB/
-├── credentials/
-│   └── HkuCosmosDbCredentialsApi.credentials.ts
-├── nodes/
-│   └── HkuCosmosDbNode/
-│       └── HkuCosmosDbNode.node.ts
-├── package.json
-└── README.md
-```
-
-### Key Design Decisions
-
-1. **Static Inputs**: Required for AI Agent tool compatibility
-2. **Optional Embedding Input**: Allows flexibility across operations
-3. **Direct SQL Execution**: Eliminates Azure Function dependency
-4. **RRF Implementation**: Combines full-text and vector search effectively
-5. **Field Simplification**: Reduces noise in output data
+- Verify your container has both full-text and vector indexes configured
+- Check that documents have the required `text` and `vector` fields
+- Ensure an embedding model is connected
 
 ---
 
-## Future Enhancements
+## Requirements
 
-Potential improvements:
+- n8n version 1.0.0 or higher
+- Azure Cosmos DB account with SQL API
+- (Optional) Embedding model for hybrid search and automatic embedding generation
 
-- [ ] Batch operations support
-- [ ] Custom RRF weighting parameters
-- [ ] Multiple vector field support
-- [ ] Query result caching
-- [ ] Streaming results for large datasets
+## Resources
 
----
+- [Azure Cosmos DB Documentation](https://learn.microsoft.com/en-us/azure/cosmos-db/)
+- [n8n Documentation](https://docs.n8n.io/)
+- [Report Issues](https://github.com/your-repo/issues)
 
 ## License
 
-[Your License Here]
-
-## Contributing
-
-Contributions are welcome! Please submit issues and pull requests.
-
-## Support
-
-For questions or issues, please open a GitHub issue.
+MIT

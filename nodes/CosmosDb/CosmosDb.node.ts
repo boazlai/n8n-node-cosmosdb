@@ -12,14 +12,14 @@ import { CosmosClient } from '@azure/cosmos';
 
 export class CosmosDb implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'Cosmos DB (Boaz)',
+		displayName: 'Cosmos DB',
 		name: 'cosmosDb',
 		icon: { light: 'file:database.svg', dark: 'file:lightDatabase.svg' },
 		group: ['transform'],
 		version: 1,
 		description: 'Cosmos DB Node - Upsert documents to Azure Cosmos DB',
 		defaults: {
-			name: 'Cosmos DB (Boaz)',
+			name: 'Cosmos DB',
 		},
 		inputs: [
 			NodeConnectionTypes.Main,
@@ -927,6 +927,35 @@ export class CosmosDb implements INodeType {
 				},
 			},
 			{
+				displayName: 'Additional SQL Filters',
+				name: 'additionalFilters',
+				type: 'string',
+				default: '',
+				placeholder: 'c.published = true AND c.year > 2020',
+				typeOptions: {
+					rows: 3,
+				},
+				description: 'Optional additional WHERE conditions to filter results before RRF ranking. Example: c.status = "active" AND c.priority > 5.',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+			},
+			{
+				displayName: 'Fields to Return',
+				name: 'fieldsToReturn',
+				type: 'string',
+				default: '',
+				placeholder: 'ID, title, summary, publishedDate',
+				description: 'Optional comma-separated list of field names to return. Leave empty to return all fields (*).',
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+			},
+			{
 				displayName: 'Simplify Output',
 				name: 'simplifyOutput',
 				type: 'boolean',
@@ -1476,6 +1505,16 @@ export class CosmosDb implements INodeType {
 						itemIndex,
 						'',
 					) as string;
+					const additionalFilters = this.getNodeParameter(
+						'additionalFilters',
+						itemIndex,
+						'',
+					) as string;
+					const fieldsToReturn = this.getNodeParameter(
+						'fieldsToReturn',
+						itemIndex,
+						'',
+					) as string;
 					const simplifyOutput = this.getNodeParameter(
 						'simplifyOutput',
 						itemIndex,
@@ -1518,10 +1557,42 @@ export class CosmosDb implements INodeType {
 					// Inline the embedding as a literal array in the SQL
 					const embeddingLiteral = `[${embedding.join(',')}]`;
 
-					// Build RRF hybrid search query with inlined values
-					const rrfQuery = partitionKeyValue
-						? `SELECT TOP ${topK} * FROM c WHERE c.${partitionKeyField}='${safePartitionKeyValue}' ORDER BY RANK RRF(FullTextScore(c.text, ${safeKeyword}), VectorDistance(c.vector, ${embeddingLiteral}))`
-						: `SELECT TOP ${topK} * FROM c ORDER BY RANK RRF(FullTextScore(c.text, ${safeKeyword}), VectorDistance(c.vector, ${embeddingLiteral}))`;
+					// Build SELECT clause
+					let selectClause = '*';
+					if (fieldsToReturn && fieldsToReturn.trim()) {
+						// Parse field names and add 'c.' prefix if not already present
+						const fields = fieldsToReturn
+							.split(',')
+							.map((field) => {
+								const trimmed = field.trim();
+								// Check if already has 'c.' prefix or is using alias/function
+								if (trimmed.startsWith('c.') || /\s+AS\s+/i.test(trimmed)) {
+									return trimmed;
+								}
+								return `c.${trimmed}`;
+							})
+							.join(', ');
+						selectClause = fields;
+					}
+
+					// Build WHERE clause combining partition key and additional filters
+					let whereClause = '';
+					const conditions: string[] = [];
+
+					if (partitionKeyValue) {
+						conditions.push(`c.${partitionKeyField}='${safePartitionKeyValue}'`);
+					}
+
+					if (additionalFilters && additionalFilters.trim()) {
+						conditions.push(`(${additionalFilters.trim()})`);
+					}
+
+					if (conditions.length > 0) {
+						whereClause = ` WHERE ${conditions.join(' AND ')}`;
+					}
+
+					// Build RRF hybrid search query with combined filters
+					const rrfQuery = `SELECT TOP ${topK} ${selectClause} FROM c${whereClause} ORDER BY RANK RRF(FullTextScore(c.text, ${safeKeyword}), VectorDistance(c.vector, ${embeddingLiteral}))`;
 
 					try {
 						// Execute RRF query directly through Cosmos SDK
