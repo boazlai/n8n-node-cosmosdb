@@ -6,6 +6,49 @@ export class CosmosDbEntraIdApi implements ICredentialType {
 	documentationUrl = 'https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-setup-rbac';
 	extends = ['microsoftOAuth2Api'];
 	properties: INodeProperties[] = [
+		// Override inherited OAuth2 properties to hide them
+		{
+			displayName: 'OAuth Redirect URL',
+			name: 'oauthCallbackUrl',
+			type: 'hidden',
+			default: '',
+		},
+		{
+			displayName: 'Authorization URL',
+			name: 'authUrl',
+			type: 'hidden',
+			default: '',
+		},
+		{
+			displayName: 'Access Token URL',
+			name: 'accessTokenUrl',
+			type: 'hidden',
+			default: '',
+		},
+		{
+			displayName: 'Client ID',
+			name: 'clientId',
+			type: 'hidden',
+			default: '', // Will be populated by N8N_OAUTH2_MICROSOFT_CLIENT_ID env var
+		},
+		{
+			displayName: 'Client Secret',
+			name: 'clientSecret',
+			type: 'hidden',
+			default: '', // Will be populated by N8N_OAUTH2_MICROSOFT_CLIENT_SECRET env var
+		},
+		{
+			displayName: 'Allowed HTTP Request Domains',
+			name: 'allowedDomains',
+			type: 'hidden',
+			default: 'All',
+		},
+		{
+			displayName: 'Microsoft Graph API Base URL',
+			name: 'graphApiBaseUrl',
+			type: 'hidden',
+			default: 'Global (https://graph.microsoft.com)',
+		},
 		{
 			displayName: 'Scope',
 			name: 'scope',
@@ -16,13 +59,9 @@ export class CosmosDbEntraIdApi implements ICredentialType {
 		{
 			displayName: 'API Scope',
 			name: 'apiScope',
-			type: 'string',
+			type: 'hidden', // Changed to hidden
 			required: true,
 			default: 'https://cosmos.azure.com/user_impersonation',
-			description:
-				'⚠️ REQUIRED: Azure Cosmos DB API scope. Use <code>https://cosmos.azure.com/user_impersonation</code> for delegated permissions or <code>https://cosmos.azure.com/.default</code> for application permissions. Note: <code>offline_access</code> is automatically added for token refresh.',
-			hint: 'Use <code>https://cosmos.azure.com/user_impersonation</code> for delegated permissions or <code>https://cosmos.azure.com/.default</code> for application permissions',
-			noDataExpression: true,
 		},
 		{
 			displayName: 'Endpoint',
