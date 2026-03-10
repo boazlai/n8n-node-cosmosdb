@@ -36,9 +36,42 @@ export class CosmosDb implements INodeType {
 			{
 				name: 'cosmosDbApi',
 				required: true,
+				displayOptions: {
+					show: {
+						authenticationType: ['masterKey'],
+					},
+				},
+			},
+			{
+				name: 'cosmosDbEntraIdApi',
+				required: true,
+				displayOptions: {
+					show: {
+						authenticationType: ['entraId'],
+					},
+				},
 			},
 		],
 		properties: [
+			{
+				displayName: 'Authentication Type',
+				name: 'authenticationType',
+				type: 'options',
+				options: [
+					{
+						name: 'Master Key',
+						value: 'masterKey',
+						description: 'Authenticate using the Cosmos DB account master key',
+					},
+					{
+						name: 'Microsoft Entra ID (Azure AD)',
+						value: 'entraId',
+						description: 'Authenticate using Microsoft Entra ID OAuth2 (RBAC)',
+					},
+				],
+				default: 'masterKey',
+				description: 'The authentication method to use for connecting to Cosmos DB',
+			},
 			{
 				displayName: 'Resource',
 				name: 'resource',
@@ -935,7 +968,8 @@ export class CosmosDb implements INodeType {
 				typeOptions: {
 					rows: 3,
 				},
-				description: 'Optional additional WHERE conditions to filter results before RRF ranking. Example: c.status = "active" AND c.priority > 5.',
+				description:
+					'Optional additional WHERE conditions to filter results before RRF ranking. Example: c.status = "active" AND c.priority > 5.',
 				displayOptions: {
 					show: {
 						operation: ['hybridSearch'],
@@ -948,7 +982,8 @@ export class CosmosDb implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder: 'ID, title, summary, publishedDate',
-				description: 'Optional comma-separated list of field names to return. Leave empty to return all fields (*).',
+				description:
+					'Optional comma-separated list of field names to return. Leave empty to return all fields (*).',
 				displayOptions: {
 					show: {
 						operation: ['hybridSearch'],
@@ -1001,11 +1036,39 @@ export class CosmosDb implements INodeType {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
 
-		const credentials = await this.getCredentials('cosmosDbApi');
-		const endpoint = credentials.endpoint as string;
-		const key = credentials.key as string;
+		const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
+		let client: CosmosClient;
 
-		const client = new CosmosClient({ endpoint, key });
+		if (authenticationType === 'entraId') {
+			const entraIdCredentials = await this.getCredentials('cosmosDbEntraIdApi');
+			const endpoint = entraIdCredentials.endpoint as string;
+			const oauthTokenData = entraIdCredentials.oauthTokenData as any;
+
+			if (!oauthTokenData?.access_token) {
+				throw new NodeOperationError(
+					this.getNode(),
+					'No valid Entra ID access token found. Please re-authenticate the "Cosmos DB (Microsoft Entra ID / Azure AD) API" credential.',
+				);
+			}
+
+			const tokenCredential = {
+				async getToken() {
+					return {
+						token: oauthTokenData.access_token as string,
+						expiresOnTimestamp: oauthTokenData.expires_at
+							? new Date(oauthTokenData.expires_at as string).getTime()
+							: Date.now() + 3600 * 1000,
+					};
+				},
+			};
+
+			client = new CosmosClient({ endpoint, aadCredentials: tokenCredential as any });
+		} else {
+			const credentials = await this.getCredentials('cosmosDbApi');
+			const endpoint = credentials.endpoint as string;
+			const key = credentials.key as string;
+			client = new CosmosClient({ endpoint, key });
+		}
 
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			try {
@@ -1510,11 +1573,7 @@ export class CosmosDb implements INodeType {
 						itemIndex,
 						'',
 					) as string;
-					const fieldsToReturn = this.getNodeParameter(
-						'fieldsToReturn',
-						itemIndex,
-						'',
-					) as string;
+					const fieldsToReturn = this.getNodeParameter('fieldsToReturn', itemIndex, '') as string;
 					const simplifyOutput = this.getNodeParameter(
 						'simplifyOutput',
 						itemIndex,
@@ -1810,11 +1869,30 @@ export class CosmosDb implements INodeType {
 	methods = {
 		loadOptions: {
 			async getDatabases(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const credentials = await this.getCredentials('cosmosDbApi');
-				const endpoint = credentials.endpoint as string;
-				const key = credentials.key as string;
+				const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
+				let client: CosmosClient;
 
-				const client = new CosmosClient({ endpoint, key });
+				if (authenticationType === 'entraId') {
+					const creds = await this.getCredentials('cosmosDbEntraIdApi');
+					const endpoint = creds.endpoint as string;
+					const oauthTokenData = creds.oauthTokenData as any;
+					client = new CosmosClient({
+						endpoint,
+						aadCredentials: {
+							getToken: async () => ({
+								token: oauthTokenData.access_token,
+								expiresOnTimestamp: oauthTokenData.expires_at
+									? new Date(oauthTokenData.expires_at).getTime()
+									: Date.now() + 3600000,
+							}),
+						} as any,
+					});
+				} else {
+					const credentials = await this.getCredentials('cosmosDbApi');
+					const endpoint = credentials.endpoint as string;
+					const key = credentials.key as string;
+					client = new CosmosClient({ endpoint, key });
+				}
 
 				try {
 					const { resources } = await client.databases.readAll().fetchAll();
@@ -1831,16 +1909,35 @@ export class CosmosDb implements INodeType {
 			},
 
 			async getContainers(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const credentials = await this.getCredentials('cosmosDbApi');
-				const endpoint = credentials.endpoint as string;
-				const key = credentials.key as string;
+				const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
 				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
 
 				if (!databaseName) {
 					return [];
 				}
 
-				const client = new CosmosClient({ endpoint, key });
+				let client: CosmosClient;
+				if (authenticationType === 'entraId') {
+					const creds = await this.getCredentials('cosmosDbEntraIdApi');
+					const endpoint = creds.endpoint as string;
+					const oauthTokenData = creds.oauthTokenData as any;
+					client = new CosmosClient({
+						endpoint,
+						aadCredentials: {
+							getToken: async () => ({
+								token: oauthTokenData.access_token,
+								expiresOnTimestamp: oauthTokenData.expires_at
+									? new Date(oauthTokenData.expires_at).getTime()
+									: Date.now() + 3600000,
+							}),
+						} as any,
+					});
+				} else {
+					const credentials = await this.getCredentials('cosmosDbApi');
+					const endpoint = credentials.endpoint as string;
+					const key = credentials.key as string;
+					client = new CosmosClient({ endpoint, key });
+				}
 
 				try {
 					const database = client.database(databaseName);
@@ -1860,16 +1957,35 @@ export class CosmosDb implements INodeType {
 			async getContainersForContainerOps(
 				this: ILoadOptionsFunctions,
 			): Promise<INodePropertyOptions[]> {
-				const credentials = await this.getCredentials('cosmosDbApi');
-				const endpoint = credentials.endpoint as string;
-				const key = credentials.key as string;
+				const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
 				const databaseName = this.getCurrentNodeParameter('databaseNameForContainer') as string;
 
 				if (!databaseName) {
 					return [];
 				}
 
-				const client = new CosmosClient({ endpoint, key });
+				let client: CosmosClient;
+				if (authenticationType === 'entraId') {
+					const creds = await this.getCredentials('cosmosDbEntraIdApi');
+					const endpoint = creds.endpoint as string;
+					const oauthTokenData = creds.oauthTokenData as any;
+					client = new CosmosClient({
+						endpoint,
+						aadCredentials: {
+							getToken: async () => ({
+								token: oauthTokenData.access_token,
+								expiresOnTimestamp: oauthTokenData.expires_at
+									? new Date(oauthTokenData.expires_at).getTime()
+									: Date.now() + 3600000,
+							}),
+						} as any,
+					});
+				} else {
+					const credentials = await this.getCredentials('cosmosDbApi');
+					const endpoint = credentials.endpoint as string;
+					const key = credentials.key as string;
+					client = new CosmosClient({ endpoint, key });
+				}
 
 				try {
 					const database = client.database(databaseName);
@@ -1887,9 +2003,7 @@ export class CosmosDb implements INodeType {
 			},
 
 			async getItemIds(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const credentials = await this.getCredentials('cosmosDbApi');
-				const endpoint = credentials.endpoint as string;
-				const key = credentials.key as string;
+				const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
 				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
 				const containerName = this.getCurrentNodeParameter('containerName') as string;
 
@@ -1897,7 +2011,28 @@ export class CosmosDb implements INodeType {
 					return [];
 				}
 
-				const client = new CosmosClient({ endpoint, key });
+				let client: CosmosClient;
+				if (authenticationType === 'entraId') {
+					const creds = await this.getCredentials('cosmosDbEntraIdApi');
+					const endpoint = creds.endpoint as string;
+					const oauthTokenData = creds.oauthTokenData as any;
+					client = new CosmosClient({
+						endpoint,
+						aadCredentials: {
+							getToken: async () => ({
+								token: oauthTokenData.access_token,
+								expiresOnTimestamp: oauthTokenData.expires_at
+									? new Date(oauthTokenData.expires_at).getTime()
+									: Date.now() + 3600000,
+							}),
+						} as any,
+					});
+				} else {
+					const credentials = await this.getCredentials('cosmosDbApi');
+					const endpoint = credentials.endpoint as string;
+					const key = credentials.key as string;
+					client = new CosmosClient({ endpoint, key });
+				}
 				try {
 					const container = client.database(databaseName).container(containerName);
 					// Limit to first 200 IDs to keep dropdown responsive
@@ -1922,15 +2057,34 @@ export class CosmosDb implements INodeType {
 				this: ILoadOptionsFunctions,
 				filter?: string,
 			): Promise<INodePropertyOptions[]> {
-				const credentials = await this.getCredentials('cosmosDbApi');
-				const endpoint = credentials.endpoint as string;
-				const key = credentials.key as string;
+				const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
 				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
 				const containerName = this.getCurrentNodeParameter('containerName') as string;
 
 				if (!databaseName || !containerName) return [];
 
-				const client = new CosmosClient({ endpoint, key });
+				let client: CosmosClient;
+				if (authenticationType === 'entraId') {
+					const creds = await this.getCredentials('cosmosDbEntraIdApi');
+					const endpoint = creds.endpoint as string;
+					const oauthTokenData = creds.oauthTokenData as any;
+					client = new CosmosClient({
+						endpoint,
+						aadCredentials: {
+							getToken: async () => ({
+								token: oauthTokenData.access_token,
+								expiresOnTimestamp: oauthTokenData.expires_at
+									? new Date(oauthTokenData.expires_at).getTime()
+									: Date.now() + 3600000,
+							}),
+						} as any,
+					});
+				} else {
+					const credentials = await this.getCredentials('cosmosDbApi');
+					const endpoint = credentials.endpoint as string;
+					const key = credentials.key as string;
+					client = new CosmosClient({ endpoint, key });
+				}
 				try {
 					const container = client.database(databaseName).container(containerName);
 					const querySpec = { query: 'SELECT c.id FROM c' };
@@ -1958,15 +2112,34 @@ export class CosmosDb implements INodeType {
 				this: ILoadOptionsFunctions,
 				filter?: string,
 			): Promise<INodeListSearchResult> {
-				const credentials = await this.getCredentials('cosmosDbApi');
-				const endpoint = credentials.endpoint as string;
-				const key = credentials.key as string;
+				const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
 				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
 				const containerName = this.getCurrentNodeParameter('containerName') as string;
 
 				if (!databaseName || !containerName) return { results: [] };
 
-				const client = new CosmosClient({ endpoint, key });
+				let client: CosmosClient;
+				if (authenticationType === 'entraId') {
+					const creds = await this.getCredentials('cosmosDbEntraIdApi');
+					const endpoint = creds.endpoint as string;
+					const oauthTokenData = creds.oauthTokenData as any;
+					client = new CosmosClient({
+						endpoint,
+						aadCredentials: {
+							getToken: async () => ({
+								token: oauthTokenData.access_token,
+								expiresOnTimestamp: oauthTokenData.expires_at
+									? new Date(oauthTokenData.expires_at).getTime()
+									: Date.now() + 3600000,
+							}),
+						} as any,
+					});
+				} else {
+					const credentials = await this.getCredentials('cosmosDbApi');
+					const endpoint = credentials.endpoint as string;
+					const key = credentials.key as string;
+					client = new CosmosClient({ endpoint, key });
+				}
 				try {
 					const container = client.database(databaseName).container(containerName);
 					const query = { query: 'SELECT VALUE c.id FROM c' };
@@ -1993,15 +2166,34 @@ export class CosmosDb implements INodeType {
 				this: ILoadOptionsFunctions,
 				filter?: string,
 			): Promise<INodeListSearchResult> {
-				const credentials = await this.getCredentials('cosmosDbApi');
-				const endpoint = credentials.endpoint as string;
-				const key = credentials.key as string;
+				const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
 				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
 				const containerName = this.getCurrentNodeParameter('containerName') as string;
 
 				if (!databaseName || !containerName) return { results: [] };
 
-				const client = new CosmosClient({ endpoint, key });
+				let client: CosmosClient;
+				if (authenticationType === 'entraId') {
+					const creds = await this.getCredentials('cosmosDbEntraIdApi');
+					const endpoint = creds.endpoint as string;
+					const oauthTokenData = creds.oauthTokenData as any;
+					client = new CosmosClient({
+						endpoint,
+						aadCredentials: {
+							getToken: async () => ({
+								token: oauthTokenData.access_token,
+								expiresOnTimestamp: oauthTokenData.expires_at
+									? new Date(oauthTokenData.expires_at).getTime()
+									: Date.now() + 3600000,
+							}),
+						} as any,
+					});
+				} else {
+					const credentials = await this.getCredentials('cosmosDbApi');
+					const endpoint = credentials.endpoint as string;
+					const key = credentials.key as string;
+					client = new CosmosClient({ endpoint, key });
+				}
 				try {
 					const container = client.database(databaseName).container(containerName);
 					const def = await container.read();
