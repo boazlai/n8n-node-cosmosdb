@@ -122,6 +122,8 @@ With automatic embedding enabled:
 
 Combine keyword and AI-powered semantic search for superior results using Reciprocal Rank Fusion (RRF).
 
+By default, hybrid search looks for full-text content in the `text` field and embeddings in the `vector` field. You can override both field names in the node when your documents use a different schema.
+
 **What is RRF?**
 RRF combines two ranking methods to give you the best of both worlds:
 
@@ -364,7 +366,7 @@ You can also create containers with the proper indexing policies directly using 
 **Hybrid search not returning results**
 
 - Verify your container has both full-text and vector indexes configured
-- Check that documents have the required `text` and `vector` fields
+- Check that documents have the expected full-text and vector fields, or set the hybrid search field names explicitly
 - Ensure an embedding model is connected
 
 ---
