@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-cosmosdb",
-	"version": "0.1.8",
+	"version": "0.1.9",
 	"description": "custom cosmosdb node for n8n",
 	"keywords": [
 		"n8n-community-node-package"
@@ -43,6 +43,7 @@
 		]
 	},
 	"devDependencies": {
+		"@types/node": "^22.14.1",
 		"@azure/core-auth": "^1.10.1",
 		"@typescript-eslint/parser": "~8.32.0",
 		"eslint": "^8.57.0",

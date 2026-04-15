@@ -7,6 +7,7 @@ import type {
 	INodeExecutionData,
 	ILoadOptionsFunctions,
 	INodePropertyOptions,
+	IDataObject,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError, nodeNameToToolName } from 'n8n-workflow';
 import { CosmosClient } from '@azure/cosmos';
@@ -104,7 +105,8 @@ function prioritizeMatchingOption(
 		(o) => typeof o.value === 'string' && o.value.toLowerCase() === preferredValue.toLowerCase(),
 	);
 	if (idx <= 0) {
-		if (idx === 0) return [{ ...options[0], name: `${options[0].name} (${label})` }, ...options.slice(1)];
+		if (idx === 0)
+			return [{ ...options[0], name: `${options[0].name} (${label})` }, ...options.slice(1)];
 		return options;
 	}
 	const preferred = options[idx];
@@ -119,7 +121,10 @@ function getValueByPath(source: unknown, path: string): unknown {
 	if (!path) return source;
 	return path.split('.').reduce<unknown>((cur, seg) => {
 		if (cur === null || cur === undefined) return undefined;
-		if (Array.isArray(cur)) { const i = Number(seg); return Number.isInteger(i) ? cur[i] : undefined; }
+		if (Array.isArray(cur)) {
+			const i = Number(seg);
+			return Number.isInteger(i) ? cur[i] : undefined;
+		}
 		if (typeof cur === 'object') return (cur as Record<string, unknown>)[seg];
 		return undefined;
 	}, source);
@@ -181,21 +186,9 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				Tools: ['Other Tools'],
 			},
 		},
-		// Static inputs — always requires an embedding model, like native vector store nodes
-		inputs: [
-			{
-				displayName: 'Embeddings',
-				type: NodeConnectionTypes.AiEmbedding,
-				required: true,
-				maxConnections: 1,
-			},
-			{
-				displayName: 'Reranker',
-				type: NodeConnectionTypes.AiReranker,
-				required: false,
-				maxConnections: 1,
-			},
-		],
+		// Dynamic inputs — show Reranker only when useReranker toggle is enabled
+		inputs:
+			`={{ $parameter["useReranker"] ? [{ displayName: 'Embeddings', type: '${NodeConnectionTypes.AiEmbedding}', required: true, maxConnections: 1 }, { displayName: 'Reranker', type: '${NodeConnectionTypes.AiReranker}', required: false, maxConnections: 1 }] : [{ displayName: 'Embeddings', type: '${NodeConnectionTypes.AiEmbedding}', required: true, maxConnections: 1 }] }}` as unknown as INodeTypeDescription['inputs'],
 		// Only AiTool output — node lives entirely on the AI tool bus
 		outputs: [NodeConnectionTypes.AiTool],
 		credentials: [
@@ -296,12 +289,68 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				description: 'Number of top results to retrieve',
 			},
 			{
+				displayName: 'Use Reranker',
+				name: 'useReranker',
+				type: 'boolean',
+				default: false,
+				description: 'Whether to enable the Reranker input for re-ranking results after retrieval',
+			},
+			{
 				displayName: 'Options',
 				name: 'options',
 				type: 'collection',
 				placeholder: 'Add Option',
 				default: {},
 				options: [
+					{
+						displayName: 'Additional SQL Filters',
+						name: 'additionalFilters',
+						type: 'string',
+						default: '',
+						typeOptions: { rows: 2 },
+						placeholder: 'c.published = true AND c.year > 2020',
+						description: 'Optional SQL conditions appended to the query (no WHERE keyword)',
+					},
+					{
+						displayName: 'Custom Access Token',
+						name: 'customAccessToken',
+						type: 'string',
+						typeOptions: { password: true },
+						default: '',
+						description: 'Bearer token to use with the custom endpoint override',
+					},
+					{
+						displayName: 'Custom Endpoint',
+						name: 'customEndpoint',
+						type: 'string',
+						default: '',
+						placeholder: 'https://your-account.documents.azure.com:443/',
+						description: 'Cosmos DB account endpoint URL for the dev override',
+					},
+					{
+						displayName: 'Exclude Fields',
+						name: 'excludeFields',
+						type: 'string',
+						default: 'vector,text',
+						placeholder: 'vector,text,rawContent',
+						description: 'Comma-separated fields to remove from output',
+					},
+					{
+						displayName: 'Fields to Return',
+						name: 'fieldsToReturn',
+						type: 'string',
+						default: '',
+						placeholder: 'ID, title, summary',
+						description: 'Comma-separated fields to return. Leave empty to return full documents.',
+					},
+					{
+						displayName: 'Include Debug Info',
+						name: 'includeDebugInfo',
+						type: 'boolean',
+						default: false,
+						description:
+							'Whether to include the generated SQL and embedding diagnostics in the response',
+					},
 					{
 						displayName: 'Partition Key Field',
 						name: 'partitionKeyField',
@@ -317,23 +366,6 @@ export class CosmosDbHybridSearchTool implements INodeType {
 						description: 'Optional partition key value to filter results',
 					},
 					{
-						displayName: 'Additional SQL Filters',
-						name: 'additionalFilters',
-						type: 'string',
-						default: '',
-						typeOptions: { rows: 2 },
-						placeholder: 'c.published = true AND c.year > 2020',
-						description: 'Optional SQL conditions appended to the query (no WHERE keyword)',
-					},
-					{
-						displayName: 'Fields to Return',
-						name: 'fieldsToReturn',
-						type: 'string',
-						default: '',
-						placeholder: 'id, title, summary',
-						description: 'Comma-separated fields to return. Leave empty to return full documents.',
-					},
-					{
 						displayName: 'Simplify Output',
 						name: 'simplifyOutput',
 						type: 'boolean',
@@ -341,42 +373,11 @@ export class CosmosDbHybridSearchTool implements INodeType {
 						description: 'Whether to strip Cosmos DB internal metadata fields (_rid, _self, etc.)',
 					},
 					{
-						displayName: 'Exclude Fields',
-						name: 'excludeFields',
-						type: 'string',
-						default: 'vector,text',
-						placeholder: 'vector,text,rawContent',
-						description: 'Comma-separated fields to remove from output',
-					},
-					{
-						displayName: 'Include Debug Info',
-						name: 'includeDebugInfo',
-						type: 'boolean',
-						default: false,
-						description: 'Whether to include the generated SQL and embedding diagnostics in the response',
-					},
-					{
 						displayName: 'Use Dev Override (Custom Endpoint + Token)',
 						name: 'useDevOverride',
 						type: 'boolean',
 						default: false,
 						description: 'Whether to override credentials with a custom endpoint and access token',
-					},
-					{
-						displayName: 'Custom Endpoint',
-						name: 'customEndpoint',
-						type: 'string',
-						default: '',
-						placeholder: 'https://your-account.documents.azure.com:443/',
-						description: 'Cosmos DB account endpoint URL for the dev override',
-					},
-					{
-						displayName: 'Custom Access Token',
-						name: 'customAccessToken',
-						type: 'string',
-						typeOptions: { password: true },
-						default: '',
-						description: 'Bearer token to use with the custom endpoint override',
 					},
 				],
 			},
@@ -394,16 +395,30 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				let preferredUserScopedName: string | undefined;
 
 				if (customEndpoint && customAccessToken) {
-					preferredUserScopedName = extractPreferredUserScopedName({ access_token: customAccessToken });
-					client = new CosmosClient({ endpoint: customEndpoint, aadCredentials: new N8nCosmosTokenCredential(customAccessToken) });
+					preferredUserScopedName = extractPreferredUserScopedName({
+						access_token: customAccessToken,
+					});
+					client = new CosmosClient({
+						endpoint: customEndpoint,
+						aadCredentials: new N8nCosmosTokenCredential(customAccessToken),
+					});
 				} else if (authenticationType === 'entraId') {
 					const creds = await this.getCredentials('cosmosDbEntraIdApi');
 					const oauthTokenData = creds.oauthTokenData as Record<string, unknown>;
 					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
-					client = new CosmosClient({ endpoint: creds.endpoint as string, aadCredentials: new N8nCosmosTokenCredential(oauthTokenData.access_token as string, oauthTokenData.expires_at as string | undefined) });
+					client = new CosmosClient({
+						endpoint: creds.endpoint as string,
+						aadCredentials: new N8nCosmosTokenCredential(
+							oauthTokenData.access_token as string,
+							oauthTokenData.expires_at as string | undefined,
+						),
+					});
 				} else {
 					const creds = await this.getCredentials('cosmosDbApi');
-					client = new CosmosClient({ endpoint: creds.endpoint as string, key: creds.key as string });
+					client = new CosmosClient({
+						endpoint: creds.endpoint as string,
+						key: creds.key as string,
+					});
 				}
 
 				try {
@@ -411,7 +426,10 @@ export class CosmosDbHybridSearchTool implements INodeType {
 					const opts = resources.map((db: { id: string }) => ({ name: db.id, value: db.id }));
 					return prioritizeMatchingOption(opts, preferredUserScopedName);
 				} catch (error) {
-					throw new NodeOperationError(this.getNode(), `Failed to load databases: ${(error as Error).message}`);
+					throw new NodeOperationError(
+						this.getNode(),
+						`Failed to load databases: ${(error as Error).message}`,
+					);
 				}
 			},
 
@@ -427,16 +445,30 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				let preferredUserScopedName: string | undefined;
 
 				if (customEndpoint && customAccessToken) {
-					preferredUserScopedName = extractPreferredUserScopedName({ access_token: customAccessToken });
-					client = new CosmosClient({ endpoint: customEndpoint, aadCredentials: new N8nCosmosTokenCredential(customAccessToken) });
+					preferredUserScopedName = extractPreferredUserScopedName({
+						access_token: customAccessToken,
+					});
+					client = new CosmosClient({
+						endpoint: customEndpoint,
+						aadCredentials: new N8nCosmosTokenCredential(customAccessToken),
+					});
 				} else if (authenticationType === 'entraId') {
 					const creds = await this.getCredentials('cosmosDbEntraIdApi');
 					const oauthTokenData = creds.oauthTokenData as Record<string, unknown>;
 					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
-					client = new CosmosClient({ endpoint: creds.endpoint as string, aadCredentials: new N8nCosmosTokenCredential(oauthTokenData.access_token as string, oauthTokenData.expires_at as string | undefined) });
+					client = new CosmosClient({
+						endpoint: creds.endpoint as string,
+						aadCredentials: new N8nCosmosTokenCredential(
+							oauthTokenData.access_token as string,
+							oauthTokenData.expires_at as string | undefined,
+						),
+					});
 				} else {
 					const creds = await this.getCredentials('cosmosDbApi');
-					client = new CosmosClient({ endpoint: creds.endpoint as string, key: creds.key as string });
+					client = new CosmosClient({
+						endpoint: creds.endpoint as string,
+						key: creds.key as string,
+					});
 				}
 
 				try {
@@ -444,7 +476,10 @@ export class CosmosDbHybridSearchTool implements INodeType {
 					const opts = resources.map((c: { id: string }) => ({ name: c.id, value: c.id }));
 					return prioritizeMatchingOption(opts, preferredUserScopedName);
 				} catch (error) {
-					throw new NodeOperationError(this.getNode(), `Failed to load containers: ${(error as Error).message}`);
+					throw new NodeOperationError(
+						this.getNode(),
+						`Failed to load containers: ${(error as Error).message}`,
+					);
 				}
 			},
 		},
@@ -458,13 +493,23 @@ export class CosmosDbHybridSearchTool implements INodeType {
 	 * - addInputData / addOutputData track the execution in n8n's data flow
 	 */
 	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
-		const authenticationType = this.getNodeParameter('authenticationType', itemIndex, 'masterKey') as string;
+		const authenticationType = this.getNodeParameter(
+			'authenticationType',
+			itemIndex,
+			'masterKey',
+		) as string;
 		const databaseName = (this.getNodeParameter('databaseName', itemIndex, '') as string).trim();
 		const containerName = (this.getNodeParameter('containerName', itemIndex, '') as string).trim();
-		const vectorFieldName = (this.getNodeParameter('vectorFieldName', itemIndex, 'vector') as string).trim();
-		const textFieldName = (this.getNodeParameter('textFieldName', itemIndex, 'text') as string).trim();
+		const vectorFieldName = (
+			this.getNodeParameter('vectorFieldName', itemIndex, 'vector') as string
+		).trim();
+		const textFieldName = (
+			this.getNodeParameter('textFieldName', itemIndex, 'text') as string
+		).trim();
 		const topK = this.getNodeParameter('topK', itemIndex, 10) as number;
-		const manualToolDescription = (this.getNodeParameter('toolDescription', itemIndex, '') as string).trim();
+		const manualToolDescription = (
+			this.getNodeParameter('toolDescription', itemIndex, '') as string
+		).trim();
 		const options = this.getNodeParameter('options', itemIndex, {}) as Record<string, unknown>;
 
 		const partitionKeyField = ((options.partitionKeyField as string) || 'category').trim();
@@ -476,9 +521,13 @@ export class CosmosDbHybridSearchTool implements INodeType {
 		const includeDebugInfo = options.includeDebugInfo === true;
 		const customEndpoint = ((options.customEndpoint as string) || '').trim();
 		const customAccessToken = ((options.customAccessToken as string) || '').trim();
+		const useReranker = this.getNodeParameter('useReranker', itemIndex, false) as boolean;
 
 		if (!databaseName || !containerName) {
-			throw new NodeOperationError(this.getNode(), 'Database Name and Container Name are required.');
+			throw new NodeOperationError(
+				this.getNode(),
+				'Database Name and Container Name are required.',
+			);
 		}
 
 		// Capture embeddings and reranker at setup time — same as native vector store nodes
@@ -487,26 +536,39 @@ export class CosmosDbHybridSearchTool implements INodeType {
 			0,
 		)) as IEmbeddingModel;
 
-		const reranker = (await this.getInputConnectionData(
-			NodeConnectionTypes.AiReranker,
-			0,
-		)) as IRerankerModel | undefined;
+		const reranker = useReranker
+			? ((await this.getInputConnectionData(NodeConnectionTypes.AiReranker, 0)) as
+					| IRerankerModel
+					| undefined)
+			: undefined;
 
 		if (!embeddings) {
-			throw new NodeOperationError(this.getNode(), 'Connect an Embeddings model to use Hybrid Search.');
+			throw new NodeOperationError(
+				this.getNode(),
+				'Connect an Embeddings model to use Hybrid Search.',
+			);
 		}
 
 		// Build the Cosmos DB client
 		let client: CosmosClient;
 		if (customEndpoint && customAccessToken) {
-			client = new CosmosClient({ endpoint: customEndpoint, aadCredentials: new N8nCosmosTokenCredential(customAccessToken) });
+			client = new CosmosClient({
+				endpoint: customEndpoint,
+				aadCredentials: new N8nCosmosTokenCredential(customAccessToken),
+			});
 		} else if (authenticationType === 'entraId') {
 			const creds = await this.getCredentials('cosmosDbEntraIdApi');
 			const oauthTokenData = creds.oauthTokenData as Record<string, unknown>;
 			if (!oauthTokenData?.access_token) {
 				throw new NodeOperationError(this.getNode(), 'No valid Entra ID access token found.');
 			}
-			client = new CosmosClient({ endpoint: creds.endpoint as string, aadCredentials: new N8nCosmosTokenCredential(oauthTokenData.access_token as string, oauthTokenData.expires_at as string | undefined) });
+			client = new CosmosClient({
+				endpoint: creds.endpoint as string,
+				aadCredentials: new N8nCosmosTokenCredential(
+					oauthTokenData.access_token as string,
+					oauthTokenData.expires_at as string | undefined,
+				),
+			});
 		} else {
 			const creds = await this.getCredentials('cosmosDbApi');
 			client = new CosmosClient({ endpoint: creds.endpoint as string, key: creds.key as string });
@@ -517,11 +579,13 @@ export class CosmosDbHybridSearchTool implements INodeType {
 		// Tool name derived from the node's display name (native nodes v1.3+ pattern)
 		const toolName = nodeNameToToolName(this.getNode());
 
-		const toolDescription = manualToolDescription ||
+		const toolDescription =
+			manualToolDescription ||
 			`Search Azure Cosmos DB container "${containerName}" in database "${databaseName}" ` +
-			`using hybrid full-text and vector search. ` +
-			`Input a plain-text query string describing what you want to find. ` +
-			`Returns up to ${topK} results ranked by semantic and keyword relevance.`;
+				`using hybrid full-text and vector search. ` +
+				`Provide two inputs: "vector" — a simplified, semantically clear version of the user question for embedding; ` +
+				`and "fullText" — up to 5 space-separated keywords for full-text keyword search. ` +
+				`Returns up to ${topK} results ranked by combined semantic and keyword relevance.`;
 
 		// Helper to strip unwanted fields from output documents
 		const stripOutput = (doc: Record<string, unknown>): Record<string, unknown> => {
@@ -532,7 +596,10 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				}
 			}
 			if (excludeFieldsStr) {
-				for (const field of excludeFieldsStr.split(',').map((f) => f.trim()).filter(Boolean)) {
+				for (const field of excludeFieldsStr
+					.split(',')
+					.map((f) => f.trim())
+					.filter(Boolean)) {
 					delete cleaned[field];
 				}
 			}
@@ -547,7 +614,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				name: string;
 				description: string;
 				schema: unknown;
-				func: (input: { input: string }) => Promise<string>;
+				func: (input: { vector: string; fullText: string }) => Promise<string>;
 			}) => object;
 		};
 
@@ -558,25 +625,31 @@ export class CosmosDbHybridSearchTool implements INodeType {
 			schema: {
 				type: 'object',
 				properties: {
-					input: {
+					vector: {
 						type: 'string',
-						description: 'Plain-text query to search for in the Cosmos DB container',
+						description:
+							'Semantically clear version of the user question for vector embedding search (e.g. "how to register a smart card for CCMR access")',
+					},
+					fullText: {
+						type: 'string',
+						description:
+							'Up to 5 space-separated keywords for full-text keyword search (e.g. "smart card register CCMR access")',
 					},
 				},
-				required: ['input'],
+				required: ['vector', 'fullText'],
 			},
-			func: async ({ input }: { input: string }): Promise<string> => {
+			func: async ({ vector, fullText }: { vector: string; fullText: string }): Promise<string> => {
 				// Track tool invocation input in n8n execution data
 				const { index } = context.addInputData(NodeConnectionTypes.AiTool, [
-					[{ json: { query: input } }],
+					[{ json: { vectorQuery: vector, fullTextQuery: fullText } }],
 				]);
 
 				try {
-					// input is a plain-text query from the agent — embed it and run hybrid search
-					const embedding = await embeddings.embedQuery(input);
+					// Embed the semantic query; use fullText keywords for full-text scoring
+					const embedding = await embeddings.embedQuery(vector);
 					const embeddingLiteral = `[${embedding.join(',')}]`;
 
-					const safeKeyword = input
+					const safeKeyword = fullText
 						.trim()
 						.split(/\s+/)
 						.filter(Boolean)
@@ -613,24 +686,35 @@ export class CosmosDbHybridSearchTool implements INodeType {
 					if (!resources?.length) {
 						const noResult = JSON.stringify(
 							includeDebugInfo
-								? { message: 'No results found', query: input, sql }
-								: { message: 'No results found', query: input },
+								? { message: 'No results found', vectorQuery: vector, fullTextQuery: fullText, sql }
+								: { message: 'No results found', vectorQuery: vector, fullTextQuery: fullText },
 						);
-						context.addOutputData(NodeConnectionTypes.AiTool, index, [[{ json: { response: noResult } }]]);
+						context.addOutputData(NodeConnectionTypes.AiTool, index, [
+							[{ json: { response: noResult } }],
+						]);
 						return noResult;
 					}
 
 					const reranked = await rerankDocuments(
 						resources as Array<Record<string, unknown>>,
 						reranker,
-						input,
+						vector,
 						textFieldName,
 					);
 
 					const cleaned = reranked.map(stripOutput);
 					const response = JSON.stringify(
 						includeDebugInfo
-							? { results: cleaned, debug: { query: input, sql, embeddingDimensions: embedding.length, resultCount: cleaned.length } }
+							? {
+									results: cleaned,
+									debug: {
+										vectorQuery: vector,
+										fullTextQuery: fullText,
+										sql,
+										embeddingDimensions: embedding.length,
+										resultCount: cleaned.length,
+									},
+								}
 							: cleaned,
 					);
 
@@ -639,7 +723,9 @@ export class CosmosDbHybridSearchTool implements INodeType {
 					return response;
 				} catch (error) {
 					const message = (error as Error).message || String(error);
-					context.addOutputData(NodeConnectionTypes.AiTool, index, [[{ json: { error: message } }]]);
+					context.addOutputData(NodeConnectionTypes.AiTool, index, [
+						[{ json: { error: message } }],
+					]);
 					return JSON.stringify({ error: message });
 				}
 			},
@@ -656,19 +742,30 @@ export class CosmosDbHybridSearchTool implements INodeType {
 	 */
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		const query = ((items[0]?.json?.input as string) || '').trim();
+		// Support both new split-field schema { vector, fullText } and legacy { input }
+		const legacyInput = ((items[0]?.json?.input as string) || '').trim();
+		const vectorQuery = ((items[0]?.json?.vector as string) || legacyInput).trim();
+		const fullTextQuery = ((items[0]?.json?.fullText as string) || legacyInput).trim();
 
-		if (!query) {
+		if (!vectorQuery && !fullTextQuery) {
 			// Called during setup / configuration phase — no real query yet
 			return [[{ json: { output: 'No query provided' } }]];
 		}
 
 		const itemIndex = 0;
-		const authenticationType = this.getNodeParameter('authenticationType', itemIndex, 'masterKey') as string;
+		const authenticationType = this.getNodeParameter(
+			'authenticationType',
+			itemIndex,
+			'masterKey',
+		) as string;
 		const databaseName = (this.getNodeParameter('databaseName', itemIndex, '') as string).trim();
 		const containerName = (this.getNodeParameter('containerName', itemIndex, '') as string).trim();
-		const vectorFieldName = (this.getNodeParameter('vectorFieldName', itemIndex, 'vector') as string).trim();
-		const textFieldName = (this.getNodeParameter('textFieldName', itemIndex, 'text') as string).trim();
+		const vectorFieldName = (
+			this.getNodeParameter('vectorFieldName', itemIndex, 'vector') as string
+		).trim();
+		const textFieldName = (
+			this.getNodeParameter('textFieldName', itemIndex, 'text') as string
+		).trim();
 		const topK = this.getNodeParameter('topK', itemIndex, 10) as number;
 		const options = this.getNodeParameter('options', itemIndex, {}) as Record<string, unknown>;
 
@@ -681,6 +778,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 		const includeDebugInfo = options.includeDebugInfo === true;
 		const customEndpoint = ((options.customEndpoint as string) || '').trim();
 		const customAccessToken = ((options.customAccessToken as string) || '').trim();
+		const useReranker = this.getNodeParameter('useReranker', itemIndex, false) as boolean;
 
 		if (!databaseName || !containerName) {
 			return [[{ json: { output: 'Database Name and Container Name are required.' } }]];
@@ -695,21 +793,31 @@ export class CosmosDbHybridSearchTool implements INodeType {
 			return [[{ json: { output: 'No Embeddings model connected.' } }]];
 		}
 
-		const reranker = (await this.getInputConnectionData(
-			NodeConnectionTypes.AiReranker,
-			0,
-		)) as IRerankerModel | undefined;
+		const reranker = useReranker
+			? ((await this.getInputConnectionData(NodeConnectionTypes.AiReranker, 0)) as
+					| IRerankerModel
+					| undefined)
+			: undefined;
 
 		let client: CosmosClient;
 		if (customEndpoint && customAccessToken) {
-			client = new CosmosClient({ endpoint: customEndpoint, aadCredentials: new N8nCosmosTokenCredential(customAccessToken) });
+			client = new CosmosClient({
+				endpoint: customEndpoint,
+				aadCredentials: new N8nCosmosTokenCredential(customAccessToken),
+			});
 		} else if (authenticationType === 'entraId') {
 			const creds = await this.getCredentials('cosmosDbEntraIdApi');
 			const oauthTokenData = creds.oauthTokenData as Record<string, unknown>;
 			if (!oauthTokenData?.access_token) {
 				return [[{ json: { output: 'No valid Entra ID access token found.' } }]];
 			}
-			client = new CosmosClient({ endpoint: creds.endpoint as string, aadCredentials: new N8nCosmosTokenCredential(oauthTokenData.access_token as string, oauthTokenData.expires_at as string | undefined) });
+			client = new CosmosClient({
+				endpoint: creds.endpoint as string,
+				aadCredentials: new N8nCosmosTokenCredential(
+					oauthTokenData.access_token as string,
+					oauthTokenData.expires_at as string | undefined,
+				),
+			});
 		} else {
 			const creds = await this.getCredentials('cosmosDbApi');
 			client = new CosmosClient({ endpoint: creds.endpoint as string, key: creds.key as string });
@@ -725,7 +833,10 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				}
 			}
 			if (excludeFieldsStr) {
-				for (const field of excludeFieldsStr.split(',').map((f) => f.trim()).filter(Boolean)) {
+				for (const field of excludeFieldsStr
+					.split(',')
+					.map((f) => f.trim())
+					.filter(Boolean)) {
 					delete cleaned[field];
 				}
 			}
@@ -733,10 +844,10 @@ export class CosmosDbHybridSearchTool implements INodeType {
 		};
 
 		try {
-			const embedding = await embeddings.embedQuery(query);
+			const embedding = await embeddings.embedQuery(vectorQuery);
 			const embeddingLiteral = `[${embedding.join(',')}]`;
 
-			const safeKeyword = query
+			const safeKeyword = fullTextQuery
 				.trim()
 				.split(/\s+/)
 				.filter(Boolean)
@@ -772,29 +883,44 @@ export class CosmosDbHybridSearchTool implements INodeType {
 
 			if (!resources?.length) {
 				const noResult = includeDebugInfo
-					? { message: 'No results found', query, sql }
-					: { message: 'No results found', query };
-				return [[{ json: { output: JSON.stringify(noResult) } }]];
+					? { message: 'No results found', vectorQuery, fullTextQuery, sql }
+					: { message: 'No results found', vectorQuery, fullTextQuery };
+				return [[{ json: noResult }]];
 			}
 
 			const reranked = await rerankDocuments(
 				resources as Array<Record<string, unknown>>,
 				reranker,
-				query,
+				vectorQuery,
 				textFieldName,
 			);
 
 			const cleaned = reranked.map(stripOutput);
-			const output = JSON.stringify(
-				includeDebugInfo
-					? { results: cleaned, debug: { query, sql, embeddingDimensions: embedding.length, resultCount: cleaned.length } }
-					: cleaned,
-			);
 
-			return [[{ json: { output } }]];
+			if (includeDebugInfo) {
+				return [
+					cleaned.map((doc, i) => ({
+						json: {
+							...doc,
+							_debug:
+								i === 0
+									? {
+											vectorQuery,
+											fullTextQuery,
+											sql,
+											embeddingDimensions: embedding.length,
+											resultCount: cleaned.length,
+										}
+									: undefined,
+						} as IDataObject,
+					})),
+				];
+			}
+
+			return [cleaned.map((doc) => ({ json: doc as IDataObject }))];
 		} catch (error) {
 			const message = (error as Error).message || String(error);
-			return [[{ json: { output: JSON.stringify({ error: message }) } }]];
+			return [[{ json: { error: message } }]];
 		}
 	}
 }

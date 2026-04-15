@@ -16,6 +16,16 @@ Connect Azure Cosmos DB to your n8n workflows with advanced search capabilities 
 
 🛠️ **AI Agent Ready** - Works seamlessly as a tool for AI Agent workflows
 
+## Included Nodes
+
+This package currently ships three n8n nodes:
+
+- **Cosmos DB** - Main operational node for document CRUD, SQL queries, container management, and hybrid search inside regular workflows
+- **Cosmos DB Tool** - AI tool node for agent-driven Cosmos DB retrieval patterns
+- **Cosmos DB Hybrid Search Tool** - Dedicated AI tool node focused on hybrid retrieval with separate semantic vector input and full-text keyword input
+
+Use the dedicated **Cosmos DB Hybrid Search Tool** when you want an AI Agent to call a purpose-built hybrid retrieval tool instead of routing through the broader multi-operation node.
+
 ## What You Can Do
 
 ### Work with Documents (Item Operations)
@@ -50,8 +60,11 @@ npm install n8n-nodes-cosmosdb
    - Enter your **Primary Key** or **Secondary Key**
 
 2. **Add the Node** to your workflow:
-   - Search for "Cosmos DB" in the n8n node panel
-   - Drag it into your workflow
+     - Search for "Cosmos DB" in the n8n node panel
+     - Choose the node that matches your workflow:
+       - `Cosmos DB` for standard database operations and regular n8n flows
+       - `Cosmos DB Tool` for agent tool usage across multiple retrieval patterns
+       - `Cosmos DB Hybrid Search Tool` for a dedicated AI hybrid-search tool
 
 3. **(Optional) Connect an Embedding Model**:
    - Add an OpenAI Embeddings node (or Azure OpenAI, etc.)
@@ -123,6 +136,8 @@ With automatic embedding enabled:
 Combine keyword and AI-powered semantic search for superior results using Reciprocal Rank Fusion (RRF).
 
 By default, hybrid search looks for full-text content in the `text` field and embeddings in the `vector` field. You can override both field names in the node when your documents use a different schema.
+
+For AI Agent workflows, you can also use the dedicated **Cosmos DB Hybrid Search Tool** node. That node exposes a focused tool interface for hybrid retrieval and is designed specifically for agent tool-calling scenarios.
 
 **What is RRF?**
 RRF combines two ranking methods to give you the best of both worlds:
@@ -267,6 +282,17 @@ Permanently remove a container and all its documents.
 
 This node works seamlessly with n8n AI Agents, allowing agents to search and retrieve information from your Cosmos DB knowledge base.
 
+### Recommended AI Tool Node
+
+For new agentic retrieval workflows, use **Cosmos DB Hybrid Search Tool** when you want a dedicated hybrid-search tool.
+
+It is optimized for AI Agent use cases and accepts two explicit inputs:
+
+- `vector` for the semantic query that will be embedded
+- `fullText` for the short keyword query used by Cosmos DB full-text ranking
+
+This separation improves agent prompting and makes the hybrid-search behavior more explicit than a single free-form input.
+
 **How it works:**
 
 1. Connect the node as a tool to your AI Agent
@@ -381,7 +407,7 @@ You can also create containers with the proper indexing policies directly using 
 
 - [Azure Cosmos DB Documentation](https://learn.microsoft.com/en-us/azure/cosmos-db/)
 - [n8n Documentation](https://docs.n8n.io/)
-- [Report Issues](https://github.com/your-repo/issues)
+- [Report Issues](https://github.com/boazlai/n8n-node-cosmosdb/issues)
 
 ## License
 

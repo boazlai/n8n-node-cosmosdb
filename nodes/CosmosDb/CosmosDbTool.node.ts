@@ -3,6 +3,7 @@ import type {
 	INodeType,
 	INodeTypeDescription,
 	ISupplyDataFunctions,
+	IExecuteFunctions,
 	SupplyData,
 	INodeExecutionData,
 	ILoadOptionsFunctions,
@@ -995,8 +996,9 @@ export class CosmosDbTool implements INodeType {
 		return { response: tool };
 	}
 
-	async execute(): Promise<INodeExecutionData[][]> {
-		throw new Error(
+	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+		throw new NodeOperationError(
+			this.getNode(),
 			'Cosmos DB Tool only supports the AI tool bus. Connect it to an AI Agent via the Tool output.',
 		);
 	}
