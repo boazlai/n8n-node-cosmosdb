@@ -1,0 +1,60 @@
+{
+    "name": "n8n-nodes-cosmosdb",
+    "version": "0.1.8",
+    "description": "custom cosmosdb node for n8n",
+    "keywords": [
+        "n8n-community-node-package"
+    ],
+    "license": "MIT",
+    "homepage": "",
+    "author": {
+        "name": "Boazlai",
+        "email": "game94049@gmail.com"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/boazlai/n8n-node-cosmosdb.git"
+    },
+    "engines": {
+        "node": ">=20.15"
+    },
+    "main": "index.js",
+    "scripts": {
+        "build": "npx rimraf dist && tsc && gulp build:icons",
+        "dev": "n8n-node dev --watch --tsconfig tsconfig.dev.json",
+        "format": "prettier nodes credentials --write",
+        "lint": "eslint nodes credentials package.json",
+        "lintfix": "eslint nodes credentials package.json --fix",
+        "prepublishOnly": "npm run build && npm run lint -c .eslintrc.prepublish.js nodes credentials package.json"
+    },
+    "files": [
+        "dist"
+    ],
+    "n8n": {
+        "n8nNodesApiVersion": 1,
+        "credentials": [
+            "dist/credentials/CosmosDbCredentialsApi.credentials.js",
+            "dist/credentials/CosmosDbEntraIdApi.credentials.js"
+        ],
+        "nodes": [
+            "dist/nodes/CosmosDb/CosmosDb.node.js",
+            "dist/nodes/CosmosDb/CosmosDbTool.node.js",
+            "dist/nodes/CosmosDb/CosmosDbHybridSearchTool.node.js"
+        ]
+    },
+    "devDependencies": {
+        "@azure/core-auth": "^1.10.1",
+        "@typescript-eslint/parser": "~8.32.0",
+        "eslint": "^8.57.0",
+        "eslint-plugin-n8n-nodes-base": "^1.16.3",
+        "gulp": "^5.0.0",
+        "prettier": "^3.5.3",
+        "typescript": "^5.8.2"
+    },
+    "peerDependencies": {
+        "n8n-workflow": "*"
+    },
+    "dependencies": {
+        "@azure/cosmos": "^4.6.0"
+    }
+}

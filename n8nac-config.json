@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "activeInstanceId": "instance-1314ba53",
+  "instances": [
+    {
+      "id": "instance-1314ba53",
+      "name": "127.0.0.1 · Boaz game94049@gmail.com",
+      "host": "http://127.0.0.1:5678",
+      "syncFolder": "workflows",
+      "projectId": "personal",
+      "projectName": "Personal",
+      "instanceIdentifier": "127_0_0_1_5678_boaz_g",
+      "workflowDir": "workflows/127_0_0_1_5678_boaz_g/personal",
+      "verification": {
+        "status": "verified",
+        "normalizedHost": "http://127.0.0.1:5678",
+        "userId": "2a4e682f-a494-4829-ab2d-ef228373d394",
+        "userName": "Boaz game94049@gmail.com",
+        "userEmail": "game94049@gmail.com",
+        "lastCheckedAt": "2026-04-10T03:54:13.640Z"
+      }
+    }
+  ],
+  "host": "http://127.0.0.1:5678",
+  "syncFolder": "workflows",
+  "projectId": "personal",
+  "projectName": "Personal",
+  "instanceIdentifier": "127_0_0_1_5678_boaz_g",
+  "workflowDir": "workflows/127_0_0_1_5678_boaz_g/personal"
+}

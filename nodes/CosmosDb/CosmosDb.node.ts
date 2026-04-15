@@ -6,8 +6,6 @@ import type {
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
-	ISupplyDataFunctions,
-	SupplyData,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { CosmosClient } from '@azure/cosmos';
@@ -33,10 +31,6 @@ class N8nCosmosTokenCredential implements TokenCredential {
 }
 
 type JwtClaims = Record<string, unknown>;
-
-interface IEmbeddingModel {
-	embedQuery(text: string): Promise<number[]>;
-}
 
 interface IRerankDocument {
 	pageContent: string;
@@ -267,6 +261,13 @@ export class CosmosDb implements INodeType {
 			},
 		],
 		outputs: [NodeConnectionTypes.Main],
+		usableAsTool: {
+			replacements: {
+				description:
+					'Query or search Azure Cosmos DB. When operation is Hybrid Search, ' +
+					'requires keyword (full-text words) and query (semantic search phrase) inputs.',
+			},
+		},
 		credentials: [
 			{
 				name: 'cosmosDbApi',
@@ -1493,302 +1494,8 @@ export class CosmosDb implements INodeType {
 			},
 		],
 	};
-
-	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
-		const configuredOperation = this.getNodeParameter('operation', itemIndex, 'select') as string;
-		if (configuredOperation !== 'select' && configuredOperation !== 'hybridSearch') {
-			throw new NodeOperationError(
-				this.getNode(),
-				'Cosmos DB as a Tool only supports the Select and Hybrid Search operations.',
-			);
-		}
-
-		const authenticationType = this.getNodeParameter('authenticationType', itemIndex) as string;
-		let client: CosmosClient;
-
-		const customEndpoint = (
-			this.getNodeParameter('customEndpoint', itemIndex, '') as string
-		).trim();
-		const customAccessToken = (
-			this.getNodeParameter('customAccessToken', itemIndex, '') as string
-		).trim();
-
-		if (customEndpoint && customAccessToken) {
-			client = new CosmosClient({
-				endpoint: customEndpoint,
-				aadCredentials: new N8nCosmosTokenCredential(customAccessToken),
-			});
-		} else if (authenticationType === 'entraId') {
-			const entraIdCredentials = await this.getCredentials('cosmosDbEntraIdApi');
-			const endpoint = entraIdCredentials.endpoint as string;
-			const oauthTokenData = entraIdCredentials.oauthTokenData as any;
-
-			if (!oauthTokenData?.access_token) {
-				throw new NodeOperationError(
-					this.getNode(),
-					'No valid Entra ID access token found. Please re-authenticate the credential or use the Dev Override option.',
-				);
-			}
-
-			client = new CosmosClient({
-				endpoint,
-				aadCredentials: new N8nCosmosTokenCredential(
-					oauthTokenData.access_token as string,
-					oauthTokenData.expires_at as string | undefined,
-				),
-			});
-		} else {
-			const credentials = await this.getCredentials('cosmosDbApi');
-			const endpoint = credentials.endpoint as string;
-			const key = credentials.key as string;
-			client = new CosmosClient({ endpoint, key });
-		}
-
-		const embeddingModel = (await this.getInputConnectionData(
-			NodeConnectionTypes.AiEmbedding,
-			0,
-		)) as IEmbeddingModel | undefined;
-		const rerankerModel = (await this.getInputConnectionData(NodeConnectionTypes.AiReranker, 0)) as
-			| IRerankerModel
-			| undefined;
-
-		const databaseName = this.getNodeParameter('databaseName', itemIndex, '') as string;
-		const containerName = this.getNodeParameter('containerName', itemIndex, '') as string;
-		if (!databaseName || !containerName) {
-			throw new NodeOperationError(
-				this.getNode(),
-				'Database Name and Container Name must be selected when using Cosmos DB as a Tool. ' +
-					'Set Resource to "Item", choose your database and container, then connect the Tool output to an AI Agent.',
-			);
-		}
-
-		const vectorFieldName = this.getNodeParameter(
-			'hybridVectorFieldName',
-			itemIndex,
-			'vector',
-		) as string;
-		const textFieldName = this.getNodeParameter('hybridTextFieldName', itemIndex, 'text') as string;
-		const topK = this.getNodeParameter('topK', itemIndex, 10) as number;
-		const partitionKeyField = this.getNodeParameter(
-			'partitionKeyField',
-			itemIndex,
-			'category',
-		) as string;
-		const partitionKeyValue = this.getNodeParameter('partitionKeyValue', itemIndex, '') as string;
-		const additionalFilters = this.getNodeParameter('additionalFilters', itemIndex, '') as string;
-		const simplifyOutput = this.getNodeParameter('simplifyOutput', itemIndex, true) as boolean;
-		const sqlQuery = this.getNodeParameter('sqlQuery', itemIndex, 'SELECT * FROM c') as string;
-		const returnAll = this.getNodeParameter('returnAll', itemIndex, true) as boolean;
-		const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
-		const excludeFields = this.getNodeParameter('excludeFields', itemIndex, false) as boolean;
-		const fieldsToExclude = this.getNodeParameter('fieldsToExclude', itemIndex, '') as string;
-		const fieldsToReturn = this.getNodeParameter('fieldsToReturn', itemIndex, '') as string;
-
-		const container = client.database(databaseName).container(containerName);
-		if (configuredOperation === 'hybridSearch' && !embeddingModel) {
-			throw new NodeOperationError(
-				this.getNode(),
-				'Connect an Embeddings model to use Cosmos DB Hybrid Search as an AI tool.',
-			);
-		}
-
-		const toolDescription =
-			configuredOperation === 'hybridSearch'
-				? `Search Azure Cosmos DB container "${containerName}" in database "${databaseName}" using the configured hybrid search settings. ` +
-					`Input may be a plain natural-language query string or JSON like ` +
-					`{ "query": "search text", "keyword": "full-text keywords", "topK": ${topK}, "partitionKeyValue": "", "additionalFilters": "c.status = 'active'" }. ` +
-					`Use the connected embeddings model for vector search and the optional reranker to reorder the retrieved documents.`
-				: `Query Azure Cosmos DB container "${containerName}" in database "${databaseName}" using SQL select. ` +
-					`Input may be a SQL string or JSON like { "sql": "SELECT * FROM c WHERE ...", "rerankQuery": "optional natural-language ranking query" }. ` +
-					`When a reranker is connected, provide rerankQuery to reorder the selected rows.`;
-
-		// eslint-disable-next-line @typescript-eslint/no-var-requires
-		const { DynamicTool } = require('@langchain/core/tools') as { DynamicTool: any };
-
-		const tool = new DynamicTool({
-			name: 'cosmos_db',
-			description: toolDescription,
-			func: async (input: string): Promise<string> => {
-				try {
-					let parsedInput: Record<string, unknown> = {};
-					try {
-						parsedInput = JSON.parse(input) as Record<string, unknown>;
-					} catch {
-						parsedInput =
-							configuredOperation === 'hybridSearch' ? { query: input } : { sql: input };
-					}
-
-					const internalFields = ['_rid', '_self', '_etag', '_attachments', '_ts'];
-					const stripOutput = (doc: Record<string, unknown>): Record<string, unknown> => {
-						let cleaned = doc;
-
-						if (simplifyOutput) {
-							cleaned = { ...cleaned };
-							for (const field of internalFields) {
-								delete cleaned[field];
-							}
-						}
-
-						if (excludeFields && fieldsToExclude) {
-							const fieldsArray = fieldsToExclude
-								.split(',')
-								.map((field) => field.trim())
-								.filter((field) => field.length > 0);
-
-							cleaned = { ...cleaned };
-							for (const field of fieldsArray) {
-								delete cleaned[field];
-							}
-						}
-
-						return cleaned;
-					};
-
-					if (configuredOperation === 'hybridSearch') {
-						const normalizeOptionalSqlInput = (value: string): string => {
-							const trimmed = (value ?? '').trim();
-							if (!trimmed || /^(""|''|null|undefined)$/i.test(trimmed)) {
-								return '';
-							}
-
-							try {
-								const parsed = JSON.parse(trimmed);
-								if (typeof parsed === 'string') {
-									return parsed.trim();
-								}
-							} catch {
-								// Keep original text when it is not a JSON string literal.
-							}
-
-							return trimmed;
-						};
-						const escapeDoubleQuotes = (value: string) =>
-							value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-						const escapeSingleQuotes = (value: string) => value.replace(/'/g, "''");
-						const buildDocumentFieldReference = (
-							fieldName: string,
-							parameterName: string,
-						): string => {
-							const normalizedFieldName = normalizeOptionalSqlInput(fieldName);
-							if (!normalizedFieldName) {
-								throw new Error(`${parameterName} is required for hybrid search.`);
-							}
-
-							if (
-								!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(normalizedFieldName)
-							) {
-								throw new Error(
-									`${parameterName} must be a valid field name or dotted field path.`,
-								);
-							}
-
-							return `c.${normalizedFieldName}`;
-						};
-
-						const searchQuery =
-							String(parsedInput.query ?? parsedInput.searchQuery ?? '').trim() || input;
-						const keyword = String(parsedInput.keyword ?? searchQuery).trim();
-						const effectiveTopK = Number(parsedInput.topK ?? topK);
-						const pkValue = String(parsedInput.partitionKeyValue ?? partitionKeyValue ?? '').trim();
-						const effectiveFilters = String(
-							parsedInput.additionalFilters ?? additionalFilters ?? '',
-						).trim();
-						const effectiveFieldsToReturn = String(
-							parsedInput.fieldsToReturn ?? fieldsToReturn ?? '',
-						).trim();
-
-						const embedding = await embeddingModel!.embedQuery(searchQuery);
-						const embeddingLiteral = `[${embedding.join(',')}]`;
-						const safeKeyword = escapeDoubleQuotes(keyword)
-							.trim()
-							.split(/\s+/)
-							.filter((word) => word.length > 0)
-							.map((word) => `'${word}'`)
-							.join(',');
-						const safePartitionKeyValue = pkValue ? escapeSingleQuotes(pkValue) : '';
-						const normalizedAdditionalFilters = normalizeOptionalSqlInput(effectiveFilters);
-						const normalizedFieldsToReturn = normalizeOptionalSqlInput(effectiveFieldsToReturn);
-						const textFieldReference = buildDocumentFieldReference(
-							textFieldName,
-							'Full Text Field Name',
-						);
-						const vectorFieldReference = buildDocumentFieldReference(
-							vectorFieldName,
-							'Vector Field Name',
-						);
-
-						let selectClause = '*';
-						if (normalizedFieldsToReturn) {
-							selectClause = normalizedFieldsToReturn
-								.split(',')
-								.map((field) => {
-									const trimmedField = field.trim();
-									if (trimmedField.startsWith('c.') || /\s+AS\s+/i.test(trimmedField)) {
-										return trimmedField;
-									}
-									return `c.${trimmedField}`;
-								})
-								.join(', ');
-						}
-
-						const conditions: string[] = [];
-						if (pkValue) {
-							conditions.push(`c.${partitionKeyField}='${safePartitionKeyValue}'`);
-						}
-						if (normalizedAdditionalFilters) {
-							conditions.push(`(${normalizedAdditionalFilters})`);
-						}
-						const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
-
-						const rrfQuery =
-							`SELECT TOP ${effectiveTopK} ${selectClause} FROM c${whereClause} ` +
-							`ORDER BY RANK RRF(FullTextScore(${textFieldReference}, ${safeKeyword}), ` +
-							`VectorDistance(${vectorFieldReference}, ${embeddingLiteral}))`;
-
-						const { resources } = await container.items.query(rrfQuery).fetchAll();
-						if (!resources || resources.length === 0) {
-							return JSON.stringify({
-								message: 'No results found',
-								operation: configuredOperation,
-								query: searchQuery,
-							});
-						}
-
-						const rerankedResources = await rerankDocuments(
-							resources as Array<Record<string, unknown>>,
-							rerankerModel,
-							searchQuery,
-							textFieldName,
-						);
-
-						return JSON.stringify(rerankedResources.map(stripOutput));
-					}
-
-					const effectiveSqlQuery = String(
-						parsedInput.sql ?? parsedInput.sqlQuery ?? sqlQuery,
-					).trim();
-					const rerankQuery = String(parsedInput.rerankQuery ?? parsedInput.query ?? '').trim();
-					const { resources } = await container.items.query(effectiveSqlQuery).fetchAll();
-					if (!resources || resources.length === 0) {
-						return JSON.stringify({ message: 'No results found', operation: configuredOperation });
-					}
-
-					const limitedResources = returnAll ? resources : resources.slice(0, limit);
-					const rerankedResources = await rerankDocuments(
-						limitedResources as Array<Record<string, unknown>>,
-						rerankerModel,
-						rerankQuery,
-					);
-
-					return JSON.stringify(rerankedResources.map(stripOutput));
-				} catch (error) {
-					return JSON.stringify({ error: (error as Error).message || String(error) });
-				}
-			},
-		});
-
-		return { response: tool };
-	}
+	// supplyData removed — usableAsTool causes n8n to call execute() directly,
+	// which resolves $fromAI() expressions with the AI-provided values at invocation time.
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();

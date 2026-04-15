@@ -1,11 +1,14 @@
 import type {
+	IDataObject,
 	INodeType,
 	INodeTypeDescription,
 	ISupplyDataFunctions,
 	SupplyData,
 	INodeExecutionData,
+	ILoadOptionsFunctions,
+	INodePropertyOptions,
 } from 'n8n-workflow';
-import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError, nodeNameToToolName } from 'n8n-workflow';
 import { CosmosClient } from '@azure/cosmos';
 import type { TokenCredential } from '@azure/core-auth';
 
@@ -38,6 +41,114 @@ class N8nCosmosTokenCredential implements TokenCredential {
 				: Date.now() + 3600 * 1000,
 		};
 	}
+}
+
+type JwtClaims = Record<string, unknown>;
+
+function decodeJwtClaims(token?: string): JwtClaims {
+	if (!token) {
+		return {};
+	}
+
+	const tokenParts = token.split('.');
+	if (tokenParts.length < 2 || !tokenParts[1]) {
+		return {};
+	}
+
+	try {
+		const normalizedPayload = tokenParts[1].replace(/-/g, '+').replace(/_/g, '/');
+		const paddedPayload = normalizedPayload.padEnd(
+			Math.ceil(normalizedPayload.length / 4) * 4,
+			'=',
+		);
+		const payload = Buffer.from(paddedPayload, 'base64').toString('utf8');
+		const parsedPayload = JSON.parse(payload);
+
+		return typeof parsedPayload === 'object' && parsedPayload !== null ? parsedPayload : {};
+	} catch {
+		return {};
+	}
+}
+
+function extractPreferredUserScopedName(
+	oauthTokenData?: Record<string, unknown>,
+): string | undefined {
+	if (!oauthTokenData) {
+		return undefined;
+	}
+
+	const directCandidate = [
+		oauthTokenData.unique_name,
+		oauthTokenData.preferred_username,
+		oauthTokenData.email,
+		oauthTokenData.upn,
+	].find((value) => typeof value === 'string' && value.trim().length > 0) as string | undefined;
+
+	const tokenClaims = [
+		decodeJwtClaims(oauthTokenData.id_token as string | undefined),
+		decodeJwtClaims(oauthTokenData.access_token as string | undefined),
+	];
+
+	const tokenCandidate = tokenClaims
+		.map(
+			(claims) =>
+				[claims.unique_name, claims.preferred_username, claims.email, claims.upn].find(
+					(value) => typeof value === 'string' && value.trim().length > 0,
+				) as string | undefined,
+		)
+		.find((value) => Boolean(value));
+
+	const preferredIdentity = directCandidate ?? tokenCandidate;
+	if (!preferredIdentity) {
+		return undefined;
+	}
+
+	const normalizedIdentity = preferredIdentity.trim().toLowerCase();
+	if (!normalizedIdentity) {
+		return undefined;
+	}
+
+	return normalizedIdentity;
+}
+
+function prioritizeMatchingOption(
+	options: INodePropertyOptions[],
+	preferredValue?: string,
+	label = 'Suggested',
+): INodePropertyOptions[] {
+	if (!preferredValue) {
+		return options;
+	}
+
+	const preferredIndex = options.findIndex(
+		(option) =>
+			typeof option.value === 'string' &&
+			option.value.toLowerCase() === preferredValue.toLowerCase(),
+	);
+
+	if (preferredIndex <= 0) {
+		if (preferredIndex === 0) {
+			return [
+				{
+					...options[0],
+					name: `${options[0].name} (${label})`,
+				},
+				...options.slice(1),
+			];
+		}
+
+		return options;
+	}
+
+	const preferredOption = options[preferredIndex];
+	return [
+		{
+			...preferredOption,
+			name: `${preferredOption.name} (${label})`,
+		},
+		...options.slice(0, preferredIndex),
+		...options.slice(preferredIndex + 1),
+	];
 }
 
 function getValueByPath(source: unknown, path: string): unknown {
@@ -136,21 +247,17 @@ export class CosmosDbTool implements INodeType {
 		version: 1,
 		description: 'Cosmos DB retrieval tool for AI Agent workflows',
 		defaults: { name: 'Cosmos DB Tool' },
-		usableAsTool: true,
-		inputs: [
-			{
-				displayName: 'Embeddings',
-				type: NodeConnectionTypes.AiEmbedding,
-				required: false,
-				maxConnections: 1,
-			},
-			{
-				displayName: 'Reranker',
-				type: NodeConnectionTypes.AiReranker,
-				required: false,
-				maxConnections: 1,
-			},
-		],
+		inputs: `={{
+			((parameters) => {
+				if (parameters?.operation === 'hybridSearch') {
+					return [
+						{ displayName: 'Embeddings', type: '${NodeConnectionTypes.AiEmbedding}', required: true, maxConnections: 1 },
+						{ displayName: 'Reranker', type: '${NodeConnectionTypes.AiReranker}', required: false, maxConnections: 1 }
+					];
+				}
+				return [];
+			})($parameter)
+		}}`,
 		outputs: [NodeConnectionTypes.AiTool],
 		credentials: [
 			{
@@ -182,6 +289,7 @@ export class CosmosDbTool implements INodeType {
 					{ name: 'Microsoft Entra ID (Azure AD)', value: 'entraId' },
 				],
 				default: 'masterKey',
+				description: 'The authentication method to use for connecting to Cosmos DB',
 			},
 			{
 				displayName: 'Operation',
@@ -195,18 +303,77 @@ export class CosmosDbTool implements INodeType {
 				noDataExpression: true,
 			},
 			{
-				displayName: 'Database Name',
-				name: 'databaseName',
-				type: 'string',
-				default: '',
-				required: true,
+				displayName: 'Tool Description',
+				name: 'descriptionType',
+				type: 'options',
+				options: [
+					{
+						name: 'Automatically From Node Configuration',
+						value: 'auto',
+					},
+					{
+						name: 'Define Below',
+						value: 'manual',
+					},
+				],
+				default: 'auto',
+				description: 'Whether to let n8n generate the tool description or define it manually',
 			},
 			{
-				displayName: 'Container Name',
-				name: 'containerName',
+				displayName: 'Tool Description',
+				name: 'toolDescription',
 				type: 'string',
+				typeOptions: { rows: 3 },
 				default: '',
+				placeholder: 'Describe when the AI agent should use this tool and what inputs it expects',
+				description: 'Custom description shown to the AI agent for tool selection and invocation',
+				hint: 'Use this when the automatic description is not specific enough for the agent',
+				displayOptions: {
+					show: {
+						descriptionType: ['manual'],
+					},
+				},
+			},
+			{
+				displayName: 'Database Name or ID',
+				name: 'databaseName',
+				type: 'options',
+				typeOptions: {
+					loadOptionsDependsOn: [
+						'authenticationType',
+						'useDevOverride',
+						'customEndpoint',
+						'customAccessToken',
+					],
+					loadOptionsMethod: 'getDatabases',
+				},
+				default: '',
+				placeholder: 'Select a database...',
 				required: true,
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				hint: 'This field supports expressions if you need to inject the database ID dynamically.',
+			},
+			{
+				displayName: 'Container Name or ID',
+				name: 'containerName',
+				type: 'options',
+				typeOptions: {
+					loadOptionsDependsOn: [
+						'databaseName',
+						'authenticationType',
+						'useDevOverride',
+						'customEndpoint',
+						'customAccessToken',
+					],
+					loadOptionsMethod: 'getContainers',
+				},
+				default: '',
+				placeholder: 'Select a container...',
+				required: true,
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				hint: 'This field supports expressions if you need to inject the container ID dynamically.',
 			},
 			{
 				displayName: 'SQL Query',
@@ -214,6 +381,10 @@ export class CosmosDbTool implements INodeType {
 				type: 'string',
 				typeOptions: { rows: 5 },
 				default: 'SELECT * FROM c',
+				placeholder: 'SELECT * FROM c WHERE c.status = "active"',
+				description:
+					'The default SQL query to execute against the container when the tool input does not provide one',
+				hint: 'This value is used as the fallback for structured tool calls',
 				displayOptions: { show: { operation: ['select'] } },
 			},
 			{
@@ -221,6 +392,7 @@ export class CosmosDbTool implements INodeType {
 				name: 'returnAll',
 				type: 'boolean',
 				default: true,
+				description: 'Whether to return all results or only up to a given limit',
 				displayOptions: { show: { operation: ['select'] } },
 			},
 			{
@@ -229,6 +401,8 @@ export class CosmosDbTool implements INodeType {
 				type: 'number',
 				default: 50,
 				typeOptions: { minValue: 1 },
+				description: 'Max number of results to return',
+				hint: 'This value is used when the tool input does not provide a limit',
 				displayOptions: { show: { operation: ['select'], returnAll: [false] } },
 			},
 			{
@@ -236,7 +410,10 @@ export class CosmosDbTool implements INodeType {
 				name: 'keyword',
 				type: 'string',
 				default: '',
-				description: 'Default full-text keywords. The AI tool caller can override this.',
+				placeholder: 'azure cosmos db vector search',
+				description:
+					'Default full-text keywords for hybrid search when the tool input does not provide them',
+				hint: 'Leave empty to rely entirely on the tool call input',
 				displayOptions: { show: { operation: ['hybridSearch'] } },
 			},
 			{
@@ -244,7 +421,9 @@ export class CosmosDbTool implements INodeType {
 				name: 'searchQuery',
 				type: 'string',
 				default: '',
-				description: 'Default semantic search query. The AI tool caller can override this.',
+				placeholder: 'Find papers about retrieval-augmented generation',
+				description: 'Default semantic search query when the tool input does not provide one',
+				hint: 'Leave empty to rely entirely on the tool call input',
 				displayOptions: { show: { operation: ['hybridSearch'] } },
 			},
 			{
@@ -252,7 +431,9 @@ export class CosmosDbTool implements INodeType {
 				name: 'hybridVectorFieldName',
 				type: 'string',
 				default: 'vector',
+				placeholder: 'vector',
 				required: true,
+				description: 'The document field used for vector search',
 				displayOptions: { show: { operation: ['hybridSearch'] } },
 			},
 			{
@@ -260,7 +441,9 @@ export class CosmosDbTool implements INodeType {
 				name: 'hybridTextFieldName',
 				type: 'string',
 				default: 'text',
+				placeholder: 'text',
 				required: true,
+				description: 'The document field used for full-text search',
 				displayOptions: { show: { operation: ['hybridSearch'] } },
 			},
 			{
@@ -269,6 +452,17 @@ export class CosmosDbTool implements INodeType {
 				type: 'number',
 				default: 10,
 				typeOptions: { minValue: 1, maxValue: 1000 },
+				description: 'Number of top results to retrieve from the database',
+				hint: 'This value is used when the tool input does not provide topK',
+				displayOptions: { show: { operation: ['hybridSearch'] } },
+			},
+			{
+				displayName: 'Include Debug Info',
+				name: 'includeDebugInfo',
+				type: 'boolean',
+				default: false,
+				description:
+					'Whether to include embedding, query, and result diagnostics in the tool response',
 				displayOptions: { show: { operation: ['hybridSearch'] } },
 			},
 			{
@@ -276,6 +470,8 @@ export class CosmosDbTool implements INodeType {
 				name: 'partitionKeyField',
 				type: 'string',
 				default: 'category',
+				placeholder: 'category',
+				description: 'The partition key field name used for optional filtering',
 				displayOptions: { show: { operation: ['hybridSearch'] } },
 			},
 			{
@@ -283,6 +479,9 @@ export class CosmosDbTool implements INodeType {
 				name: 'partitionKeyValue',
 				type: 'string',
 				default: '',
+				placeholder: 'research',
+				description: 'Optional partition key value for filtering',
+				hint: 'Leave empty when you do not need partition filtering.',
 				displayOptions: { show: { operation: ['hybridSearch'] } },
 			},
 			{
@@ -291,6 +490,9 @@ export class CosmosDbTool implements INodeType {
 				type: 'string',
 				default: '',
 				typeOptions: { rows: 3 },
+				placeholder: 'c.published = true AND c.year > 2020',
+				description: 'Optional SQL filters appended to the hybrid search query',
+				hint: 'Use SQL conditions only, without the WHERE keyword.',
 				displayOptions: { show: { operation: ['hybridSearch'] } },
 			},
 			{
@@ -298,6 +500,10 @@ export class CosmosDbTool implements INodeType {
 				name: 'fieldsToReturn',
 				type: 'string',
 				default: '',
+				placeholder: 'ID, title, summary',
+				description:
+					'Optional comma-separated list of fields to return instead of the full document',
+				hint: 'Leave empty to return full documents.',
 				displayOptions: { show: { operation: ['hybridSearch'] } },
 			},
 			{
@@ -305,18 +511,22 @@ export class CosmosDbTool implements INodeType {
 				name: 'simplifyOutput',
 				type: 'boolean',
 				default: true,
+				description: 'Whether to remove common Cosmos DB metadata fields from the output',
 			},
 			{
 				displayName: 'Exclude Fields',
 				name: 'excludeFields',
 				type: 'boolean',
 				default: false,
+				description: 'Whether to exclude additional specific fields from the output',
 			},
 			{
 				displayName: 'Fields to Exclude',
 				name: 'fieldsToExclude',
 				type: 'string',
 				default: 'vector,text',
+				placeholder: 'vector,text,rawContent',
+				description: 'Comma-separated list of fields to exclude from the output',
 				displayOptions: { show: { excludeFields: [true] } },
 			},
 			{
@@ -324,12 +534,16 @@ export class CosmosDbTool implements INodeType {
 				name: 'useDevOverride',
 				type: 'boolean',
 				default: false,
+				description:
+					'Whether to override the selected credentials with a custom endpoint and access token',
 			},
 			{
 				displayName: 'Custom Endpoint',
 				name: 'customEndpoint',
 				type: 'string',
 				default: '',
+				placeholder: 'https://your-account.documents.azure.com:443/',
+				description: 'The Cosmos DB account endpoint URL to use for the dev override',
 				displayOptions: { show: { useDevOverride: [true] } },
 			},
 			{
@@ -338,9 +552,128 @@ export class CosmosDbTool implements INodeType {
 				type: 'string',
 				typeOptions: { password: true },
 				default: '',
+				description: 'The bearer token to use with the custom endpoint override',
 				displayOptions: { show: { useDevOverride: [true] } },
 			},
 		],
+	};
+
+	methods = {
+		loadOptions: {
+			async getDatabases(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
+				let client: CosmosClient;
+				let preferredUserScopedName: string | undefined;
+
+				const customEndpoint = (
+					(this.getNodeParameter('customEndpoint', '') as string) || ''
+				).trim();
+				const customAccessToken = (
+					(this.getNodeParameter('customAccessToken', '') as string) || ''
+				).trim();
+
+				if (customEndpoint && customAccessToken) {
+					preferredUserScopedName = extractPreferredUserScopedName({
+						access_token: customAccessToken,
+					});
+					client = new CosmosClient({
+						endpoint: customEndpoint,
+						aadCredentials: new N8nCosmosTokenCredential(customAccessToken),
+					});
+				} else if (authenticationType === 'entraId') {
+					const creds = await this.getCredentials('cosmosDbEntraIdApi');
+					const endpoint = creds.endpoint as string;
+					const oauthTokenData = creds.oauthTokenData as Record<string, unknown>;
+					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
+					client = new CosmosClient({
+						endpoint,
+						aadCredentials: new N8nCosmosTokenCredential(
+							oauthTokenData.access_token as string,
+							oauthTokenData.expires_at as string | undefined,
+						),
+					});
+				} else {
+					const credentials = await this.getCredentials('cosmosDbApi');
+					client = new CosmosClient({
+						endpoint: credentials.endpoint as string,
+						key: credentials.key as string,
+					});
+				}
+
+				try {
+					const { resources } = await client.databases.readAll().fetchAll();
+					const options = resources.map((database: { id: string }) => ({
+						name: database.id,
+						value: database.id,
+					}));
+
+					return prioritizeMatchingOption(options, preferredUserScopedName);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					throw new NodeOperationError(this.getNode(), `Failed to load databases: ${message}`);
+				}
+			},
+
+			async getContainers(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const authenticationType = this.getNodeParameter('authenticationType', 0) as string;
+				const databaseName = this.getCurrentNodeParameter('databaseName') as string;
+				let preferredUserScopedName: string | undefined;
+
+				if (!databaseName) {
+					return [];
+				}
+
+				let client: CosmosClient;
+				const customEndpoint = (
+					(this.getNodeParameter('customEndpoint', '') as string) || ''
+				).trim();
+				const customAccessToken = (
+					(this.getNodeParameter('customAccessToken', '') as string) || ''
+				).trim();
+
+				if (customEndpoint && customAccessToken) {
+					preferredUserScopedName = extractPreferredUserScopedName({
+						access_token: customAccessToken,
+					});
+					client = new CosmosClient({
+						endpoint: customEndpoint,
+						aadCredentials: new N8nCosmosTokenCredential(customAccessToken),
+					});
+				} else if (authenticationType === 'entraId') {
+					const creds = await this.getCredentials('cosmosDbEntraIdApi');
+					const endpoint = creds.endpoint as string;
+					const oauthTokenData = creds.oauthTokenData as Record<string, unknown>;
+					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
+					client = new CosmosClient({
+						endpoint,
+						aadCredentials: new N8nCosmosTokenCredential(
+							oauthTokenData.access_token as string,
+							oauthTokenData.expires_at as string | undefined,
+						),
+					});
+				} else {
+					const credentials = await this.getCredentials('cosmosDbApi');
+					client = new CosmosClient({
+						endpoint: credentials.endpoint as string,
+						key: credentials.key as string,
+					});
+				}
+
+				try {
+					const database = client.database(databaseName);
+					const { resources } = await database.containers.readAll().fetchAll();
+					const options = resources.map((container: { id: string }) => ({
+						name: container.id,
+						value: container.id,
+					}));
+
+					return prioritizeMatchingOption(options, preferredUserScopedName);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					throw new NodeOperationError(this.getNode(), `Failed to load containers: ${message}`);
+				}
+			},
+		},
 	};
 
 	async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
@@ -430,6 +763,7 @@ export class CosmosDbTool implements INodeType {
 		) as string;
 		const textFieldName = this.getNodeParameter('hybridTextFieldName', itemIndex, 'text') as string;
 		const topK = this.getNodeParameter('topK', itemIndex, 10) as number;
+		const includeDebugInfo = this.getNodeParameter('includeDebugInfo', itemIndex, false) as boolean;
 		const partitionKeyField = this.getNodeParameter(
 			'partitionKeyField',
 			itemIndex,
@@ -438,15 +772,191 @@ export class CosmosDbTool implements INodeType {
 		const partitionKeyValue = this.getNodeParameter('partitionKeyValue', itemIndex, '') as string;
 		const additionalFilters = this.getNodeParameter('additionalFilters', itemIndex, '') as string;
 		const fieldsToReturn = this.getNodeParameter('fieldsToReturn', itemIndex, '') as string;
+		const descriptionType = this.getNodeParameter('descriptionType', itemIndex, 'auto') as string;
+		const manualToolDescription = this.getNodeParameter('toolDescription', itemIndex, '') as string;
 
 		const toolDescription =
-			operation === 'hybridSearch'
-				? `Search Cosmos DB container "${containerName}" in database "${databaseName}" using hybrid search. ` +
-					`Input may be plain text or JSON like { "query": "search text", "keyword": "keywords", "topK": ${topK}, "partitionKeyValue": "" }.`
-				: `Query Cosmos DB container "${containerName}" in database "${databaseName}" using SQL select. ` +
-					`Input may be a SQL string or JSON like { "sql": "SELECT * FROM c", "rerankQuery": "optional ranking query" }.`;
+			descriptionType === 'manual' && manualToolDescription.trim()
+				? manualToolDescription.trim()
+				: operation === 'hybridSearch'
+					? `Search Azure Cosmos DB container "${containerName}" in database "${databaseName}" using hybrid full-text and vector search. ` +
+						`Input MUST be a JSON string with these fields: ` +
+						`"query" (string, required: natural-language phrase used for semantic vector embedding search), ` +
+						`"keyword" (string, required: space-separated words used for full-text RRF ranking), ` +
+						`"topK" (number, optional: max results, default ${topK}). ` +
+						`Example: {"query":"equipment list for imaging lab","keyword":"imaging equipment microscope","topK":5}`
+					: `Query Azure Cosmos DB container "${containerName}" in database "${databaseName}" using SQL select. ` +
+						`Input MUST be a JSON string with fields: ` +
+						`"sqlQuery" (string, optional: SQL query, default "SELECT * FROM c"), ` +
+						`"rerankQuery" (string, optional: phrase to rerank results). ` +
+						`Example: {"sqlQuery":"SELECT * FROM c WHERE c.status = 'active'","rerankQuery":"most recent items"}`;
+		const executeTool = async (input: string | Record<string, unknown>): Promise<string> => {
+			try {
+				let parsed: Record<string, unknown> = {};
+				const rawInput = typeof input === 'string' ? input.trim() : '';
 
-		// eslint-disable-next-line @typescript-eslint/no-var-requires
+				if (typeof input === 'string') {
+					try {
+						parsed = JSON.parse(input) as Record<string, unknown>;
+					} catch {
+						parsed = operation === 'hybridSearch' ? { query: input } : { sqlQuery: input };
+					}
+				} else if (input && typeof input === 'object') {
+					parsed = input;
+				}
+
+				const stripOutput = (doc: Record<string, unknown>): Record<string, unknown> => {
+					let cleaned = doc;
+					if (simplifyOutput) {
+						cleaned = { ...cleaned };
+						for (const field of ['_rid', '_self', '_etag', '_attachments', '_ts']) {
+							delete cleaned[field];
+						}
+					}
+
+					if (excludeFields && fieldsToExclude) {
+						cleaned = { ...cleaned };
+						for (const field of fieldsToExclude
+							.split(',')
+							.map((item) => item.trim())
+							.filter(Boolean)) {
+							delete cleaned[field];
+						}
+					}
+
+					return cleaned;
+				};
+
+				if (operation === 'hybridSearch') {
+					const requestedKeyword = String(parsed.keyword ?? defaultKeyword ?? '').trim();
+					const requestedQuery = String(
+						parsed.query ?? parsed.searchQuery ?? defaultSearchQuery ?? '',
+					).trim();
+					const query = requestedQuery || requestedKeyword || rawInput;
+					const keyword = requestedKeyword || query;
+					const effectiveTopK = Number(parsed.topK ?? topK);
+					const effectivePkValue = String(
+						parsed.partitionKeyValue ?? partitionKeyValue ?? '',
+					).trim();
+					const effectiveFilters = String(
+						parsed.additionalFilters ?? additionalFilters ?? '',
+					).trim();
+					const effectiveFieldsToReturn = String(
+						parsed.fieldsToReturn ?? fieldsToReturn ?? '',
+					).trim();
+
+					const embedding = await embeddings!.embedQuery(query);
+					const embeddingLiteral = `[${embedding.join(',')}]`;
+					const safeKeyword = keyword
+						.replace(/\\/g, '\\\\')
+						.replace(/"/g, '\\"')
+						.trim()
+						.split(/\s+/)
+						.filter(Boolean)
+						.map((word) => `'${word}'`)
+						.join(',');
+
+					const conditions: string[] = [];
+					if (effectivePkValue) {
+						conditions.push(`c.${partitionKeyField}='${effectivePkValue.replace(/'/g, "''")}'`);
+					}
+					if (effectiveFilters) {
+						conditions.push(`(${effectiveFilters})`);
+					}
+
+					let selectClause = '*';
+					if (effectiveFieldsToReturn) {
+						selectClause = effectiveFieldsToReturn
+							.split(',')
+							.map((field) => {
+								const trimmed = field.trim();
+								return trimmed.startsWith('c.') || /\s+AS\s+/i.test(trimmed)
+									? trimmed
+									: `c.${trimmed}`;
+							})
+							.join(', ');
+					}
+
+					const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+					const sql =
+						`SELECT TOP ${effectiveTopK} ${selectClause} FROM c${whereClause} ` +
+						`ORDER BY RANK RRF(FullTextScore(c.${textFieldName}, ${safeKeyword}), ` +
+						`VectorDistance(c.${vectorFieldName}, ${embeddingLiteral}))`;
+
+					const hybridDebug = {
+						query,
+						keyword,
+						topK: effectiveTopK,
+						partitionKeyValue: effectivePkValue,
+						additionalFilters: effectiveFilters,
+						fieldsToReturn: effectiveFieldsToReturn,
+						embeddingDimensions: embedding.length,
+						sql,
+					};
+
+					const { resources } = await container.items.query(sql).fetchAll();
+					if (!resources?.length) {
+						return JSON.stringify(
+							includeDebugInfo
+								? {
+										message: 'No results found',
+										operation,
+										query,
+										debug: hybridDebug,
+									}
+								: { message: 'No results found', operation, query },
+						);
+					}
+
+					const reranked = await rerankDocuments(
+						resources as Array<Record<string, unknown>>,
+						reranker,
+						query,
+						textFieldName,
+					);
+
+					const cleanedResults = reranked.map(stripOutput);
+					return JSON.stringify(
+						includeDebugInfo
+							? {
+									results: cleanedResults,
+									debug: {
+										...hybridDebug,
+										resultCount: cleanedResults.length,
+									},
+								}
+							: cleanedResults,
+					);
+				}
+
+				const sql = String(parsed.sqlQuery ?? parsed.sql ?? defaultSqlQuery).trim();
+				const rerankQuery = String(parsed.rerankQuery ?? parsed.query ?? '').trim();
+				const { resources } = await container.items.query(sql).fetchAll();
+				if (!resources?.length) {
+					return JSON.stringify({ message: 'No results found', operation });
+				}
+
+				const limited = returnAll ? resources : resources.slice(0, limit);
+				const reranked = await rerankDocuments(
+					limited as Array<Record<string, unknown>>,
+					reranker,
+					rerankQuery,
+				);
+
+				return JSON.stringify(reranked.map(stripOutput));
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				throw new NodeOperationError(
+					this.getNode(),
+					`Cosmos DB Tool failed during ${operation}: ${message}`,
+				);
+			}
+		};
+
+
+
+		const toolName = nodeNameToToolName(this.getNode());
+
 		const { DynamicTool } = require('@langchain/core/tools') as {
 			DynamicTool: new (config: {
 				name: string;
@@ -456,125 +966,28 @@ export class CosmosDbTool implements INodeType {
 		};
 
 		const tool = new DynamicTool({
-			name: 'cosmos_db',
+			name: toolName,
 			description: toolDescription,
-			func: async (input: string): Promise<string> => {
+			func: async (rawInput: string): Promise<string> => {
+				let parsed: Record<string, unknown> = {};
 				try {
-					let parsed: Record<string, unknown> = {};
-					try {
-						parsed = JSON.parse(input) as Record<string, unknown>;
-					} catch {
-						parsed = operation === 'hybridSearch' ? { query: input } : { sql: input };
-					}
-
-					const stripOutput = (doc: Record<string, unknown>): Record<string, unknown> => {
-						let cleaned = doc;
-						if (simplifyOutput) {
-							cleaned = { ...cleaned };
-							for (const field of ['_rid', '_self', '_etag', '_attachments', '_ts']) {
-								delete cleaned[field];
-							}
-						}
-
-						if (excludeFields && fieldsToExclude) {
-							cleaned = { ...cleaned };
-							for (const field of fieldsToExclude
-								.split(',')
-								.map((item) => item.trim())
-								.filter(Boolean)) {
-								delete cleaned[field];
-							}
-						}
-
-						return cleaned;
-					};
-
-					if (operation === 'hybridSearch') {
-						const query =
-							String(parsed.query ?? parsed.searchQuery ?? defaultSearchQuery ?? '').trim() ||
-							input;
-						const keyword = String(parsed.keyword ?? defaultKeyword ?? query).trim() || query;
-						const effectiveTopK = Number(parsed.topK ?? topK);
-						const effectivePkValue = String(
-							parsed.partitionKeyValue ?? partitionKeyValue ?? '',
-						).trim();
-						const effectiveFilters = String(
-							parsed.additionalFilters ?? additionalFilters ?? '',
-						).trim();
-						const effectiveFieldsToReturn = String(
-							parsed.fieldsToReturn ?? fieldsToReturn ?? '',
-						).trim();
-
-						const embedding = await embeddings!.embedQuery(query);
-						const embeddingLiteral = `[${embedding.join(',')}]`;
-						const safeKeyword = keyword
-							.replace(/\\/g, '\\\\')
-							.replace(/"/g, '\\"')
-							.trim()
-							.split(/\s+/)
-							.filter(Boolean)
-							.map((word) => `'${word}'`)
-							.join(',');
-
-						const conditions: string[] = [];
-						if (effectivePkValue) {
-							conditions.push(`c.${partitionKeyField}='${effectivePkValue.replace(/'/g, "''")}'`);
-						}
-						if (effectiveFilters) {
-							conditions.push(`(${effectiveFilters})`);
-						}
-
-						let selectClause = '*';
-						if (effectiveFieldsToReturn) {
-							selectClause = effectiveFieldsToReturn
-								.split(',')
-								.map((field) => {
-									const trimmed = field.trim();
-									return trimmed.startsWith('c.') || /\s+AS\s+/i.test(trimmed)
-										? trimmed
-										: `c.${trimmed}`;
-								})
-								.join(', ');
-						}
-
-						const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
-						const sql =
-							`SELECT TOP ${effectiveTopK} ${selectClause} FROM c${whereClause} ` +
-							`ORDER BY RANK RRF(FullTextScore(c.${textFieldName}, ${safeKeyword}), ` +
-							`VectorDistance(c.${vectorFieldName}, ${embeddingLiteral}))`;
-
-						const { resources } = await container.items.query(sql).fetchAll();
-						if (!resources?.length) {
-							return JSON.stringify({ message: 'No results found', operation, query });
-						}
-
-						const reranked = await rerankDocuments(
-							resources as Array<Record<string, unknown>>,
-							reranker,
-							query,
-							textFieldName,
-						);
-
-						return JSON.stringify(reranked.map(stripOutput));
-					}
-
-					const sql = String(parsed.sql ?? parsed.sqlQuery ?? defaultSqlQuery).trim();
-					const rerankQuery = String(parsed.rerankQuery ?? parsed.query ?? '').trim();
-					const { resources } = await container.items.query(sql).fetchAll();
-					if (!resources?.length) {
-						return JSON.stringify({ message: 'No results found', operation });
-					}
-
-					const limited = returnAll ? resources : resources.slice(0, limit);
-					const reranked = await rerankDocuments(
-						limited as Array<Record<string, unknown>>,
-						reranker,
-						rerankQuery,
-					);
-
-					return JSON.stringify(reranked.map(stripOutput));
+					parsed = JSON.parse(rawInput) as Record<string, unknown>;
+				} catch {
+					parsed = operation === 'hybridSearch' ? { query: rawInput } : { sqlQuery: rawInput };
+				}
+				const inputJson: IDataObject = parsed as IDataObject;
+				const { index } = this.addInputData(NodeConnectionTypes.AiTool, [[{ json: inputJson }]]);
+				try {
+					const response = await executeTool(parsed);
+					void this.addOutputData(NodeConnectionTypes.AiTool, index, [[{ json: { response } }]]);
+					return response;
 				} catch (error) {
-					return JSON.stringify({ error: (error as Error).message || String(error) });
+					const executionError =
+						error instanceof NodeOperationError
+							? error
+							: new NodeOperationError(this.getNode(), error as Error);
+					void this.addOutputData(NodeConnectionTypes.AiTool, index, executionError);
+					throw executionError;
 				}
 			},
 		});
@@ -583,6 +996,8 @@ export class CosmosDbTool implements INodeType {
 	}
 
 	async execute(): Promise<INodeExecutionData[][]> {
-		return [[]];
+		throw new Error(
+			'Cosmos DB Tool only supports the AI tool bus. Connect it to an AI Agent via the Tool output.',
+		);
 	}
 }
