@@ -954,8 +954,6 @@ export class CosmosDbTool implements INodeType {
 			}
 		};
 
-
-
 		const toolName = nodeNameToToolName(this.getNode());
 
 		const { DynamicTool } = require('@langchain/core/tools') as {

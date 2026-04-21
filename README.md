@@ -60,11 +60,11 @@ npm install n8n-nodes-cosmosdb
    - Enter your **Primary Key** or **Secondary Key**
 
 2. **Add the Node** to your workflow:
-     - Search for "Cosmos DB" in the n8n node panel
-     - Choose the node that matches your workflow:
-       - `Cosmos DB` for standard database operations and regular n8n flows
-       - `Cosmos DB Tool` for agent tool usage across multiple retrieval patterns
-       - `Cosmos DB Hybrid Search Tool` for a dedicated AI hybrid-search tool
+   - Search for "Cosmos DB" in the n8n node panel
+   - Choose the node that matches your workflow:
+     - `Cosmos DB` for standard database operations and regular n8n flows
+     - `Cosmos DB Tool` for agent tool usage across multiple retrieval patterns
+     - `Cosmos DB Hybrid Search Tool` for a dedicated AI hybrid-search tool
 
 3. **(Optional) Connect an Embedding Model**:
    - Add an OpenAI Embeddings node (or Azure OpenAI, etc.)

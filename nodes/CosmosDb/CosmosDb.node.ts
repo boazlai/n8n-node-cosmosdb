@@ -1,4 +1,5 @@
 import type {
+	IDataObject,
 	IExecuteFunctions,
 	ILoadOptionsFunctions,
 	INodeExecutionData,
@@ -6,6 +7,7 @@ import type {
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
+	ExpressionString,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { CosmosClient } from '@azure/cosmos';
@@ -245,21 +247,23 @@ export class CosmosDb implements INodeType {
 		defaults: {
 			name: 'Cosmos DB',
 		},
-		inputs: [
-			NodeConnectionTypes.Main,
-			{
-				displayName: 'Embeddings',
-				type: NodeConnectionTypes.AiEmbedding,
-				required: false,
-				maxConnections: 1,
-			},
-			{
-				displayName: 'Reranker',
-				type: NodeConnectionTypes.AiReranker,
-				required: false,
-				maxConnections: 1,
-			},
-		],
+		inputs: `={{
+			(function() {
+				const op = $parameter.operation;
+				const res = $parameter.resource;
+				const result = ['main'];
+				if (res === 'item' && (op === 'upsert' || op === 'hybridSearch' || op === 'documentIndex')) {
+					result.push({ displayName: 'Embeddings', type: 'ai_embedding', required: op === 'documentIndex', maxConnections: 1 });
+				}
+				if (res === 'item' && op === 'hybridSearch') {
+					result.push({ displayName: 'Reranker', type: 'ai_reranker', required: false, maxConnections: 1 });
+				}
+				if (res === 'item' && op === 'documentIndex') {
+					result.push({ displayName: 'Document', type: 'ai_document', required: true, maxConnections: 1 });
+				}
+				return result;
+			})()
+		}}` as ExpressionString,
 		outputs: [NodeConnectionTypes.Main],
 		usableAsTool: {
 			replacements: {
@@ -344,6 +348,13 @@ export class CosmosDb implements INodeType {
 						value: 'delete',
 						description: 'Delete a document by ID and partition key',
 						action: 'Delete a document',
+					},
+					{
+						name: 'Document Indexing',
+						value: 'documentIndex',
+						description:
+							'Index document chunks from a Document Loader into Cosmos DB with embeddings for hybrid search',
+						action: 'Index documents',
 					},
 					{
 						name: 'Hybrid Search',
@@ -904,6 +915,97 @@ export class CosmosDb implements INodeType {
 						resource: ['item'],
 						operation: ['upsert'],
 						addText: [true],
+					},
+				},
+			},
+
+			// Document Indexing operation fields
+			{
+				displayName: 'Partition Key Value',
+				name: 'indexPartitionKeyValue',
+				type: 'string',
+				default: '',
+				placeholder: 'my-category',
+				required: true,
+				description:
+					'Partition key value shared by all indexed chunks. Must match the partition key field defined on the container.',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['documentIndex'],
+					},
+				},
+			},
+			{
+				displayName: 'Vector Field Name',
+				name: 'indexVectorFieldName',
+				type: 'string',
+				default: 'vector',
+				required: true,
+				placeholder: 'vector',
+				description: 'Field name where the embedding vector is stored (used for vector search)',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['documentIndex'],
+					},
+				},
+			},
+			{
+				displayName: 'Full Text Field Name',
+				name: 'indexTextFieldName',
+				type: 'string',
+				default: 'text',
+				required: true,
+				placeholder: 'text',
+				description:
+					'Field name where the chunk text is stored (used for full-text search). The same content is also stored in the "content" field.',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['documentIndex'],
+					},
+				},
+			},
+			{
+				displayName: 'Add Metadata',
+				name: 'indexAddMetadata',
+				type: 'boolean',
+				default: false,
+				description: 'Whether to store a custom metadata object on every indexed chunk',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['documentIndex'],
+					},
+				},
+			},
+			{
+				displayName: 'Metadata (JSON)',
+				name: 'indexCustomMetadata',
+				type: 'json',
+				default: '',
+				placeholder: '{"source": "manual", "author": "Alice"}',
+				description: 'JSON object to store in the "metadata" field of every indexed chunk',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['documentIndex'],
+						indexAddMetadata: [true],
+					},
+				},
+			},
+			{
+				displayName: 'Simplify Output',
+				name: 'indexSimplifyOutput',
+				type: 'boolean',
+				default: true,
+				description:
+					'Whether to return only id, partition key, and metadata — omitting the text and vector fields',
+				displayOptions: {
+					show: {
+						resource: ['item'],
+						operation: ['documentIndex'],
 					},
 				},
 			},
@@ -1868,6 +1970,188 @@ export class CosmosDb implements INodeType {
 						},
 						pairedItem: itemIndex,
 					});
+				} else if (operation === 'documentIndex') {
+					// === DOCUMENT INDEXING OPERATION ===
+					// Ingests all chunks from a Document Loader sub-node, embeds them, and
+					// upserts one Cosmos DB item per chunk ready for hybrid search.
+
+					const documentLoader = (await this.getInputConnectionData(
+						NodeConnectionTypes.AiDocument,
+						0,
+					)) as
+						| {
+								processAll: (
+									items: INodeExecutionData[],
+								) => Promise<Array<{ pageContent: string; metadata: Record<string, unknown> }>>;
+								processItem: (
+									item: INodeExecutionData,
+									itemIndex: number,
+								) => Promise<Array<{ pageContent: string; metadata: Record<string, unknown> }>>;
+						  }
+						| undefined;
+
+					if (!documentLoader || typeof documentLoader.processAll !== 'function') {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Document Indexing requires a Document Loader sub-node to be connected.',
+							{ itemIndex },
+						);
+					}
+
+					const loaderDocs = await documentLoader.processAll(items);
+
+					if (!Array.isArray(loaderDocs) || loaderDocs.length === 0) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Document Loader returned no document chunks. Check that the file is readable and the Data Format is correct.',
+							{ itemIndex },
+						);
+					}
+
+					const indexSimplifyOutput = this.getNodeParameter(
+						'indexSimplifyOutput',
+						itemIndex,
+						true,
+					) as boolean;
+					const indexPartitionKeyValue = (
+						this.getNodeParameter('indexPartitionKeyValue', itemIndex, '') as string
+					).trim();
+					const indexVectorFieldName = (
+						this.getNodeParameter('indexVectorFieldName', itemIndex, 'vector') as string
+					).trim();
+					const indexTextFieldName = (
+						this.getNodeParameter('indexTextFieldName', itemIndex, 'text') as string
+					).trim();
+					const indexAddMetadata = this.getNodeParameter(
+						'indexAddMetadata',
+						itemIndex,
+						false,
+					) as boolean;
+					let indexCustomMetadata: Record<string, unknown> | undefined;
+					if (indexAddMetadata) {
+						const indexCustomMetadataRaw = (
+							this.getNodeParameter('indexCustomMetadata', itemIndex, '') as string
+						).trim();
+						if (indexCustomMetadataRaw) {
+							try {
+								const parsed = JSON.parse(indexCustomMetadataRaw);
+								if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+									indexCustomMetadata = parsed as Record<string, unknown>;
+								} else {
+									throw new NodeOperationError(
+										this.getNode(),
+										'Metadata must be a JSON object (e.g. {"key": "value"}), not an array or primitive.',
+										{ itemIndex },
+									);
+								}
+							} catch (e) {
+								if (e instanceof NodeOperationError) throw e;
+								throw new NodeOperationError(
+									this.getNode(),
+									`Metadata is not valid JSON: ${(e as Error).message}`,
+									{ itemIndex },
+								);
+							}
+						}
+					}
+
+					if (!indexPartitionKeyValue) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Partition Key Value is required for Document Indexing.',
+							{ itemIndex },
+						);
+					}
+
+					// Read container partition key field name
+					const containerDefForIndex = await container.read();
+					const indexPartitionKeyField =
+						containerDefForIndex.resource?.partitionKey?.paths?.[0]?.replace(/^\//, '') || 'id';
+
+					// Batch-embed all chunks
+					const aiEmbeddingForIndex = (await this.getInputConnectionData(
+						NodeConnectionTypes.AiEmbedding,
+						0,
+					)) as any;
+					if (!aiEmbeddingForIndex) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Document Indexing requires an Embeddings sub-node to be connected.',
+							{ itemIndex },
+						);
+					}
+
+					const chunkTexts = loaderDocs.map((d) => d.pageContent);
+					let chunkEmbeddings: number[][];
+					if (typeof aiEmbeddingForIndex.embedDocuments === 'function') {
+						chunkEmbeddings = await aiEmbeddingForIndex.embedDocuments(chunkTexts);
+					} else if (typeof aiEmbeddingForIndex.embedQuery === 'function') {
+						chunkEmbeddings = await Promise.all(
+							chunkTexts.map((t: string) => aiEmbeddingForIndex.embedQuery(t)),
+						);
+					} else {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Embedding model does not support embedQuery or embedDocuments.',
+							{ itemIndex },
+						);
+					}
+
+					// Determine filename base: prefer binary data fileName, fall back to metadata.source
+					const currentItemBinary = items[itemIndex]?.binary;
+					const binaryFileName = currentItemBinary
+						? Object.values(currentItemBinary)[0]?.fileName
+						: undefined;
+					const firstSource =
+						binaryFileName || (loaderDocs[0]?.metadata?.source as string | undefined) || 'document';
+					const filenameBase = firstSource
+						.replace(/\\/g, '/')
+						.split('/')
+						.pop()!
+						.replace(/\.[^/.]+$/, '') // strip extension
+						.replace(/[^A-Za-z0-9_-]/g, '_'); // sanitise
+
+					// Upsert each chunk as a separate Cosmos DB item
+					for (let chunkIdx = 0; chunkIdx < loaderDocs.length; chunkIdx++) {
+						const chunk = loaderDocs[chunkIdx];
+						const chunkId = `${filenameBase}_${chunkIdx + 1}`;
+
+						const cosmosItem: Record<string, unknown> = {
+							id: chunkId,
+							[indexPartitionKeyField]: indexPartitionKeyValue,
+							content: chunk.pageContent,
+							[indexTextFieldName]: chunk.pageContent,
+							[indexVectorFieldName]: chunkEmbeddings[chunkIdx],
+						};
+
+						if (indexCustomMetadata !== undefined) {
+							cosmosItem.metadata = indexCustomMetadata;
+						}
+
+						const { resource: indexedResource } = await container.items.upsert(cosmosItem);
+						const rawOutput = indexedResource || cosmosItem;
+						let outputJson: IDataObject;
+						if (indexSimplifyOutput) {
+							const fieldsToOmit = new Set([
+								indexTextFieldName,
+								indexVectorFieldName,
+								'_rid',
+								'_self',
+								'_etag',
+								'_attachments',
+								'_ts',
+							]);
+							outputJson = Object.fromEntries(
+								Object.entries(rawOutput).filter(([k]) => !fieldsToOmit.has(k)),
+							) as IDataObject;
+						} else {
+							outputJson = rawOutput;
+						}
+						returnData.push({
+							json: outputJson,
+							pairedItem: itemIndex,
+						});
+					}
 				} else if (operation === 'upsert') {
 					// Batch processing for upsert operations
 					// First pass: prepare all documents and collect texts for batch embedding
