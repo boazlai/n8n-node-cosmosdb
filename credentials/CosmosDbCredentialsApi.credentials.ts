@@ -20,6 +20,7 @@ export class CosmosDbCredentialsApi implements ICredentialType {
 			required: true,
 			placeholder: 'https://your-account.documents.azure.com:443/',
 			description: 'The Cosmos DB account endpoint URL',
+			noDataExpression: true,
 		},
 		{
 			displayName: 'Access Key',

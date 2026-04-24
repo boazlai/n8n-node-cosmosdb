@@ -13,6 +13,11 @@ import { NodeConnectionTypes, NodeOperationError, nodeNameToToolName } from 'n8n
 import { CosmosClient } from '@azure/cosmos';
 import type { TokenCredential } from '@azure/core-auth';
 
+interface ICosmosTokenData {
+	accessToken: string;
+	expiresAt?: string;
+}
+
 // ─── Embedding / Reranker interfaces ────────────────────────────────────────
 
 interface IEmbeddingModel {
@@ -31,21 +36,55 @@ interface IRerankerModel {
 // ─── Auth helpers (shared pattern from CosmosDbTool) ────────────────────────
 
 class N8nCosmosTokenCredential implements TokenCredential {
+	private readonly tokenSupplier: () => Promise<ICosmosTokenData>;
+
 	constructor(
-		private accessToken: string,
+		accessTokenOrSupplier: string | (() => Promise<ICosmosTokenData> | ICosmosTokenData),
 		private expiresAt?: string,
 	) {
-		this.accessToken = accessToken.replace(/^Bearer\s+/i, '');
+		if (typeof accessTokenOrSupplier === 'function') {
+			this.tokenSupplier = async () => await accessTokenOrSupplier();
+			return;
+		}
+
+		const normalizedAccessToken = accessTokenOrSupplier.replace(/^Bearer\s+/i, '');
+		this.tokenSupplier = async () => ({
+			accessToken: normalizedAccessToken,
+			expiresAt: this.expiresAt,
+		});
 	}
 
 	async getToken() {
+		const { accessToken, expiresAt } = await this.tokenSupplier();
+		const normalizedAccessToken = accessToken.replace(/^Bearer\s+/i, '');
+
 		return {
-			token: this.accessToken,
-			expiresOnTimestamp: this.expiresAt
-				? new Date(this.expiresAt).getTime()
-				: Date.now() + 3600 * 1000,
+			token: normalizedAccessToken,
+			expiresOnTimestamp: expiresAt ? new Date(expiresAt).getTime() : Date.now() + 3600 * 1000,
 		};
 	}
+}
+
+function createEntraIdCosmosTokenCredential(
+	context: {
+		getCredentials(name: string): Promise<IDataObject>;
+		getNode(): any;
+	},
+	missingTokenMessage = 'No valid Entra ID access token found.',
+): N8nCosmosTokenCredential {
+	return new N8nCosmosTokenCredential(async () => {
+		const refreshedCredentials = await context.getCredentials('cosmosDbEntraIdApi');
+		const refreshedTokenData = refreshedCredentials.oauthTokenData as Record<string, unknown>;
+
+		if (!refreshedTokenData?.access_token) {
+			throw new NodeOperationError(context.getNode(), missingTokenMessage);
+		}
+
+		return {
+			accessToken: refreshedTokenData.access_token as string,
+			expiresAt: refreshedTokenData.expires_at as string | undefined,
+		};
+	});
 }
 
 type JwtClaims = Record<string, unknown>;
@@ -296,6 +335,14 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				description: 'Whether to enable the Reranker input for re-ranking results after retrieval',
 			},
 			{
+				displayName: 'Fields to Exclude',
+				name: 'fieldsToExclude',
+				type: 'string',
+				default: 'vector,text',
+				placeholder: 'vector,text,rawContent',
+				description: 'Comma-separated fields to remove from output',
+			},
+			{
 				displayName: 'Options',
 				name: 'options',
 				type: 'collection',
@@ -326,14 +373,6 @@ export class CosmosDbHybridSearchTool implements INodeType {
 						default: '',
 						placeholder: 'https://your-account.documents.azure.com:443/',
 						description: 'Cosmos DB account endpoint URL for the dev override',
-					},
-					{
-						displayName: 'Exclude Fields',
-						name: 'excludeFields',
-						type: 'string',
-						default: 'vector,text',
-						placeholder: 'vector,text,rawContent',
-						description: 'Comma-separated fields to remove from output',
 					},
 					{
 						displayName: 'Fields to Return',
@@ -408,10 +447,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
 					client = new CosmosClient({
 						endpoint: creds.endpoint as string,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const creds = await this.getCredentials('cosmosDbApi');
@@ -458,10 +494,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
 					client = new CosmosClient({
 						endpoint: creds.endpoint as string,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const creds = await this.getCredentials('cosmosDbApi');
@@ -517,7 +550,9 @@ export class CosmosDbHybridSearchTool implements INodeType {
 		const additionalFilters = ((options.additionalFilters as string) || '').trim();
 		const fieldsToReturn = ((options.fieldsToReturn as string) || '').trim();
 		const simplifyOutput = options.simplifyOutput !== false;
-		const excludeFieldsStr = ((options.excludeFields as string) || '').trim();
+		const excludeFieldsStr =
+			(this.getNodeParameter('fieldsToExclude', itemIndex, 'vector,text') as string).trim() ||
+			((options.excludeFields as string) || '').trim();
 		const includeDebugInfo = options.includeDebugInfo === true;
 		const customEndpoint = ((options.customEndpoint as string) || '').trim();
 		const customAccessToken = ((options.customAccessToken as string) || '').trim();
@@ -564,10 +599,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 			}
 			client = new CosmosClient({
 				endpoint: creds.endpoint as string,
-				aadCredentials: new N8nCosmosTokenCredential(
-					oauthTokenData.access_token as string,
-					oauthTokenData.expires_at as string | undefined,
-				),
+				aadCredentials: createEntraIdCosmosTokenCredential(this),
 			});
 		} else {
 			const creds = await this.getCredentials('cosmosDbApi');
@@ -774,7 +806,9 @@ export class CosmosDbHybridSearchTool implements INodeType {
 		const additionalFilters = ((options.additionalFilters as string) || '').trim();
 		const fieldsToReturn = ((options.fieldsToReturn as string) || '').trim();
 		const simplifyOutput = options.simplifyOutput !== false;
-		const excludeFieldsStr = ((options.excludeFields as string) || '').trim();
+		const excludeFieldsStr =
+			(this.getNodeParameter('fieldsToExclude', itemIndex, 'vector,text') as string).trim() ||
+			((options.excludeFields as string) || '').trim();
 		const includeDebugInfo = options.includeDebugInfo === true;
 		const customEndpoint = ((options.customEndpoint as string) || '').trim();
 		const customAccessToken = ((options.customAccessToken as string) || '').trim();
@@ -813,10 +847,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 			}
 			client = new CosmosClient({
 				endpoint: creds.endpoint as string,
-				aadCredentials: new N8nCosmosTokenCredential(
-					oauthTokenData.access_token as string,
-					oauthTokenData.expires_at as string | undefined,
-				),
+				aadCredentials: createEntraIdCosmosTokenCredential(this),
 			});
 		} else {
 			const creds = await this.getCredentials('cosmosDbApi');

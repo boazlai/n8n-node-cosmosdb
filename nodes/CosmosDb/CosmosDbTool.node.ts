@@ -13,6 +13,11 @@ import { NodeConnectionTypes, NodeOperationError, nodeNameToToolName } from 'n8n
 import { CosmosClient } from '@azure/cosmos';
 import type { TokenCredential } from '@azure/core-auth';
 
+interface ICosmosTokenData {
+	accessToken: string;
+	expiresAt?: string;
+}
+
 interface IEmbeddingModel {
 	embedQuery(text: string): Promise<number[]>;
 }
@@ -27,21 +32,55 @@ interface IRerankerModel {
 }
 
 class N8nCosmosTokenCredential implements TokenCredential {
+	private readonly tokenSupplier: () => Promise<ICosmosTokenData>;
+
 	constructor(
-		private accessToken: string,
+		accessTokenOrSupplier: string | (() => Promise<ICosmosTokenData> | ICosmosTokenData),
 		private expiresAt?: string,
 	) {
-		this.accessToken = accessToken.replace(/^Bearer\s+/i, '');
+		if (typeof accessTokenOrSupplier === 'function') {
+			this.tokenSupplier = async () => await accessTokenOrSupplier();
+			return;
+		}
+
+		const normalizedAccessToken = accessTokenOrSupplier.replace(/^Bearer\s+/i, '');
+		this.tokenSupplier = async () => ({
+			accessToken: normalizedAccessToken,
+			expiresAt: this.expiresAt,
+		});
 	}
 
 	async getToken() {
+		const { accessToken, expiresAt } = await this.tokenSupplier();
+		const normalizedAccessToken = accessToken.replace(/^Bearer\s+/i, '');
+
 		return {
-			token: this.accessToken,
-			expiresOnTimestamp: this.expiresAt
-				? new Date(this.expiresAt).getTime()
-				: Date.now() + 3600 * 1000,
+			token: normalizedAccessToken,
+			expiresOnTimestamp: expiresAt ? new Date(expiresAt).getTime() : Date.now() + 3600 * 1000,
 		};
 	}
+}
+
+function createEntraIdCosmosTokenCredential(
+	context: {
+		getCredentials(name: string): Promise<IDataObject>;
+		getNode(): any;
+	},
+	missingTokenMessage = 'No valid Entra ID access token found.',
+): N8nCosmosTokenCredential {
+	return new N8nCosmosTokenCredential(async () => {
+		const refreshedCredentials = await context.getCredentials('cosmosDbEntraIdApi');
+		const refreshedTokenData = refreshedCredentials.oauthTokenData as Record<string, unknown>;
+
+		if (!refreshedTokenData?.access_token) {
+			throw new NodeOperationError(context.getNode(), missingTokenMessage);
+		}
+
+		return {
+			accessToken: refreshedTokenData.access_token as string,
+			expiresAt: refreshedTokenData.expires_at as string | undefined,
+		};
+	});
 }
 
 type JwtClaims = Record<string, unknown>;
@@ -588,10 +627,7 @@ export class CosmosDbTool implements INodeType {
 					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
 					client = new CosmosClient({
 						endpoint,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const credentials = await this.getCredentials('cosmosDbApi');
@@ -647,10 +683,7 @@ export class CosmosDbTool implements INodeType {
 					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
 					client = new CosmosClient({
 						endpoint,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const credentials = await this.getCredentials('cosmosDbApi');
@@ -734,10 +767,7 @@ export class CosmosDbTool implements INodeType {
 
 			client = new CosmosClient({
 				endpoint,
-				aadCredentials: new N8nCosmosTokenCredential(
-					oauthTokenData.access_token as string,
-					oauthTokenData.expires_at as string | undefined,
-				),
+				aadCredentials: createEntraIdCosmosTokenCredential(this),
 			});
 		} else {
 			const credentials = await this.getCredentials('cosmosDbApi');

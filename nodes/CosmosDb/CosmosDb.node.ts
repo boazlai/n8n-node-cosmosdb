@@ -13,23 +13,61 @@ import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { CosmosClient } from '@azure/cosmos';
 import type { TokenCredential } from '@azure/core-auth';
 
+interface ICosmosTokenData {
+	accessToken: string;
+	expiresAt?: string;
+}
+
 class N8nCosmosTokenCredential implements TokenCredential {
+	private readonly tokenSupplier: () => Promise<ICosmosTokenData>;
+
 	constructor(
-		private accessToken: string,
+		accessTokenOrSupplier: string | (() => Promise<ICosmosTokenData> | ICosmosTokenData),
 		private expiresAt?: string,
 	) {
-		// Strip "Bearer " prefix if the caller passed the full Authorization header value
-		this.accessToken = accessToken.replace(/^Bearer\s+/i, '');
+		if (typeof accessTokenOrSupplier === 'function') {
+			this.tokenSupplier = async () => await accessTokenOrSupplier();
+			return;
+		}
+
+		const normalizedAccessToken = accessTokenOrSupplier.replace(/^Bearer\s+/i, '');
+		this.tokenSupplier = async () => ({
+			accessToken: normalizedAccessToken,
+			expiresAt: this.expiresAt,
+		});
 	}
 
 	async getToken() {
+		const { accessToken, expiresAt } = await this.tokenSupplier();
+		const normalizedAccessToken = accessToken.replace(/^Bearer\s+/i, '');
+
 		return {
-			token: this.accessToken,
-			expiresOnTimestamp: this.expiresAt
-				? new Date(this.expiresAt).getTime()
-				: Date.now() + 3600 * 1000,
+			token: normalizedAccessToken,
+			expiresOnTimestamp: expiresAt ? new Date(expiresAt).getTime() : Date.now() + 3600 * 1000,
 		};
 	}
+}
+
+function createEntraIdCosmosTokenCredential(
+	context: {
+		getCredentials(name: string): Promise<IDataObject>;
+		getNode(): any;
+	},
+	missingTokenMessage = 'No valid Entra ID access token found.',
+): N8nCosmosTokenCredential {
+	return new N8nCosmosTokenCredential(async () => {
+		const refreshedCredentials = await context.getCredentials('cosmosDbEntraIdApi');
+		const refreshedTokenData = refreshedCredentials.oauthTokenData as Record<string, unknown>;
+
+		if (!refreshedTokenData?.access_token) {
+			throw new NodeOperationError(context.getNode(), missingTokenMessage);
+		}
+
+		return {
+			accessToken: refreshedTokenData.access_token as string,
+			expiresAt: refreshedTokenData.expires_at as string | undefined,
+		};
+	});
 }
 
 type JwtClaims = Record<string, unknown>;
@@ -999,9 +1037,9 @@ export class CosmosDb implements INodeType {
 				displayName: 'Simplify Output',
 				name: 'indexSimplifyOutput',
 				type: 'boolean',
-				default: true,
+				default: false,
 				description:
-					'Whether to return only id, partition key, and metadata — omitting the text and vector fields',
+					'Whether to return only ID, partition key, and metadata — omitting the text and vector fields',
 				displayOptions: {
 					show: {
 						resource: ['item'],
@@ -1498,62 +1536,6 @@ export class CosmosDb implements INodeType {
 				},
 			},
 			{
-				displayName: 'Additional SQL Filters',
-				name: 'additionalFilters',
-				type: 'string',
-				default: '',
-				placeholder: 'c.published = true AND c.year > 2020',
-				typeOptions: {
-					rows: 3,
-				},
-				description:
-					'Optional additional WHERE conditions to filter results before RRF ranking. Example: c.status = "active" AND c.priority > 5.',
-				displayOptions: {
-					show: {
-						operation: ['hybridSearch'],
-					},
-				},
-			},
-			{
-				displayName: 'Fields to Return',
-				name: 'fieldsToReturn',
-				type: 'string',
-				default: '',
-				placeholder: 'ID, title, summary, publishedDate',
-				description:
-					'Optional comma-separated list of field names to return. Leave empty to return all fields (*).',
-				displayOptions: {
-					show: {
-						operation: ['hybridSearch'],
-					},
-				},
-			},
-			{
-				displayName: 'Simplify Output',
-				name: 'simplifyOutput',
-				type: 'boolean',
-				default: true,
-				description:
-					'Whether to exclude internal Cosmos DB fields (_rid, _self, _etag, _attachments, _ts)',
-				displayOptions: {
-					show: {
-						operation: ['hybridSearch'],
-					},
-				},
-			},
-			{
-				displayName: 'Exclude Fields',
-				name: 'excludeFields',
-				type: 'boolean',
-				default: false,
-				description: 'Whether to exclude additional specific fields from the results',
-				displayOptions: {
-					show: {
-						operation: ['hybridSearch'],
-					},
-				},
-			},
-			{
 				displayName: 'Fields to Exclude',
 				name: 'fieldsToExclude',
 				type: 'string',
@@ -1563,9 +1545,49 @@ export class CosmosDb implements INodeType {
 				displayOptions: {
 					show: {
 						operation: ['hybridSearch'],
-						excludeFields: [true],
 					},
 				},
+			},
+			{
+				displayName: 'Options',
+				name: 'hybridSearchOptions',
+				type: 'collection',
+				placeholder: 'Add Option',
+				default: {},
+				displayOptions: {
+					show: {
+						operation: ['hybridSearch'],
+					},
+				},
+				options: [
+					{
+						displayName: 'Additional SQL Filters',
+						name: 'additionalFilters',
+						type: 'string',
+						default: '',
+						placeholder: 'c.published = true AND c.year > 2020',
+						typeOptions: { rows: 3 },
+						description:
+							'Optional additional WHERE conditions to filter results before RRF ranking. Example: c.status = "active" AND c.priority > 5.',
+					},
+					{
+						displayName: 'Fields to Return',
+						name: 'fieldsToReturn',
+						type: 'string',
+						default: '',
+						placeholder: 'ID, title, summary, publishedDate',
+						description:
+							'Comma-separated list of field names to return. Leave empty to return all fields (*).',
+					},
+					{
+						displayName: 'Simplify Output',
+						name: 'simplifyOutput',
+						type: 'boolean',
+						default: true,
+						description:
+							'Whether to exclude internal Cosmos DB fields (_rid, _self, _etag, _attachments, _ts)',
+					},
+				],
 			},
 			{
 				displayName: 'Use Dev Override (Custom Endpoint + Token)',
@@ -1630,9 +1652,9 @@ export class CosmosDb implements INodeType {
 
 			client = new CosmosClient({
 				endpoint,
-				aadCredentials: new N8nCosmosTokenCredential(
-					oauthTokenData.access_token as string,
-					oauthTokenData.expires_at as string | undefined,
+				aadCredentials: createEntraIdCosmosTokenCredential(
+					this,
+					'No valid Entra ID access token found. Please re-authenticate the "Cosmos DB (Microsoft Entra ID / Azure AD) API" credential, or supply a Custom Endpoint and Custom Access Token via the Dev Override option.',
 				),
 			});
 		} else {
@@ -2335,19 +2357,22 @@ export class CosmosDb implements INodeType {
 						itemIndex,
 						'',
 					) as string;
-					const additionalFilters = this.getNodeParameter(
-						'additionalFilters',
+					const fieldsToExclude = (
+						this.getNodeParameter('fieldsToExclude', itemIndex, 'vector,text') as string
+					).trim();
+					const hybridSearchOptions = this.getNodeParameter(
+						'hybridSearchOptions',
 						itemIndex,
-						'',
-					) as string;
-					const fieldsToReturn = this.getNodeParameter('fieldsToReturn', itemIndex, '') as string;
-					const simplifyOutput = this.getNodeParameter(
-						'simplifyOutput',
-						itemIndex,
-						true,
-					) as boolean;
-					const excludeFields = this.getNodeParameter('excludeFields', itemIndex, false) as boolean;
-					const fieldsToExclude = this.getNodeParameter('fieldsToExclude', itemIndex, '') as string;
+						{},
+					) as {
+						additionalFilters?: string;
+						fieldsToReturn?: string;
+						simplifyOutput?: boolean;
+					};
+					const additionalFilters = (hybridSearchOptions.additionalFilters ?? '').trim();
+					const fieldsToReturn = (hybridSearchOptions.fieldsToReturn ?? '').trim();
+					const simplifyOutput = hybridSearchOptions.simplifyOutput !== false;
+					const excludeFields = fieldsToExclude.length > 0;
 
 					// Generate embedding from search query using AI embedding
 					const aiData = (await this.getInputConnectionData(
@@ -2812,10 +2837,7 @@ export class CosmosDb implements INodeType {
 					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
 					client = new CosmosClient({
 						endpoint,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const credentials = await this.getCredentials('cosmosDbApi');
@@ -2871,10 +2893,7 @@ export class CosmosDb implements INodeType {
 					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
 					client = new CosmosClient({
 						endpoint,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const credentials = await this.getCredentials('cosmosDbApi');
@@ -2933,10 +2952,7 @@ export class CosmosDb implements INodeType {
 					preferredUserScopedName = extractPreferredUserScopedName(oauthTokenData);
 					client = new CosmosClient({
 						endpoint,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const credentials = await this.getCredentials('cosmosDbApi');
@@ -2984,13 +3000,9 @@ export class CosmosDb implements INodeType {
 				} else if (authenticationType === 'entraId') {
 					const creds = await this.getCredentials('cosmosDbEntraIdApi');
 					const endpoint = creds.endpoint as string;
-					const oauthTokenData = creds.oauthTokenData as any;
 					client = new CosmosClient({
 						endpoint,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const credentials = await this.getCredentials('cosmosDbApi');
@@ -3043,13 +3055,9 @@ export class CosmosDb implements INodeType {
 				} else if (authenticationType === 'entraId') {
 					const creds = await this.getCredentials('cosmosDbEntraIdApi');
 					const endpoint = creds.endpoint as string;
-					const oauthTokenData = creds.oauthTokenData as any;
 					client = new CosmosClient({
 						endpoint,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const credentials = await this.getCredentials('cosmosDbApi');
@@ -3105,13 +3113,9 @@ export class CosmosDb implements INodeType {
 				} else if (authenticationType === 'entraId') {
 					const creds = await this.getCredentials('cosmosDbEntraIdApi');
 					const endpoint = creds.endpoint as string;
-					const oauthTokenData = creds.oauthTokenData as any;
 					client = new CosmosClient({
 						endpoint,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const credentials = await this.getCredentials('cosmosDbApi');
@@ -3166,13 +3170,9 @@ export class CosmosDb implements INodeType {
 				} else if (authenticationType === 'entraId') {
 					const creds = await this.getCredentials('cosmosDbEntraIdApi');
 					const endpoint = creds.endpoint as string;
-					const oauthTokenData = creds.oauthTokenData as any;
 					client = new CosmosClient({
 						endpoint,
-						aadCredentials: new N8nCosmosTokenCredential(
-							oauthTokenData.access_token as string,
-							oauthTokenData.expires_at as string | undefined,
-						),
+						aadCredentials: createEntraIdCosmosTokenCredential(this),
 					});
 				} else {
 					const credentials = await this.getCredentials('cosmosDbApi');

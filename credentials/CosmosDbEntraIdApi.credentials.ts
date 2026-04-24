@@ -12,42 +12,49 @@ export class CosmosDbEntraIdApi implements ICredentialType {
 			name: 'oauthCallbackUrl',
 			type: 'hidden',
 			default: '',
+			noDataExpression: true,
 		},
 		{
 			displayName: 'Authorization URL',
 			name: 'authUrl',
 			type: 'hidden',
 			default: '',
+			noDataExpression: true,
 		},
 		{
 			displayName: 'Access Token URL',
 			name: 'accessTokenUrl',
 			type: 'hidden',
 			default: '',
+			noDataExpression: true,
 		},
 		{
 			displayName: 'Client ID',
 			name: 'clientId',
 			type: 'hidden',
 			default: '', // Will be populated by N8N_OAUTH2_MICROSOFT_CLIENT_ID env var
+			noDataExpression: true,
 		},
 		{
 			displayName: 'Client Secret',
 			name: 'clientSecret',
 			type: 'hidden',
 			default: '', // Will be populated by N8N_OAUTH2_MICROSOFT_CLIENT_SECRET env var
+			noDataExpression: true,
 		},
 		{
 			displayName: 'Allowed HTTP Request Domains',
 			name: 'allowedDomains',
 			type: 'hidden',
 			default: 'All',
+			noDataExpression: true,
 		},
 		{
 			displayName: 'Microsoft Graph API Base URL',
 			name: 'graphApiBaseUrl',
 			type: 'hidden',
 			default: 'Global (https://graph.microsoft.com)',
+			noDataExpression: true,
 		},
 		{
 			displayName: 'Scope',
@@ -62,6 +69,7 @@ export class CosmosDbEntraIdApi implements ICredentialType {
 			type: 'hidden', // Changed to hidden
 			required: true,
 			default: 'https://cosmos.azure.com/user_impersonation',
+			noDataExpression: true,
 		},
 		{
 			displayName: 'Endpoint',

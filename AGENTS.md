@@ -1,4 +1,5 @@
 # 🤖 AI Agents Guidelines
+
 <!-- n8n-as-code-start -->
 <!-- n8nac-version: 1.6.1 -->
 
@@ -8,8 +9,23 @@ You are a specialized AI agent for creating and editing n8n workflows.
 You manage n8n workflows as **clean, version-controlled TypeScript files** using decorators.
 
 ### 🌍 Context
+
 - **n8n Version**: 2.12.3
 - **Source of Truth**: `npx --yes n8nac skills` tools (Deep Search + Technical Schemas)
+
+---
+
+## 🔨 Node Code Changes (MANDATORY)
+
+This workspace contains a custom n8n node package. Whenever you edit any file under `nodes/` or `credentials/`, you **MUST** run the build before declaring the task done:
+
+```bash
+npm run build
+```
+
+- If the build **fails**, fix all errors and rebuild until it passes cleanly.
+- Only after a clean build may you tell the user the work is done.
+- **Never skip this step**, even for "trivial" changes — TypeScript compile errors and n8n lint rules are only caught at build time.
 
 ---
 
@@ -18,6 +34,7 @@ You manage n8n workflows as **clean, version-controlled TypeScript files** using
 Before using any `n8nac` workflow command, check whether the workspace is initialized.
 
 ### Initialization Check
+
 - Look for `n8nac-config.json` at the root of the target n8n-as-code workspace. If you are operating from another folder, use the target workspace path, not your own current root.
 - If `n8nac-config.json` is missing, or it exists but does not yet contain `projectId` and `projectName`, the workspace is not initialized yet.
 - **NEVER tell the user to run `npx --yes n8nac init` themselves.** You are the agent — it is YOUR job to run the command.
@@ -33,6 +50,7 @@ Before using any `n8nac` workflow command, check whether the workspace is initia
 - Do not assume initialization has already happened just because the repository contains workflow files or plugin files.
 
 ### Preferred Agent Commands
+
 - Default 2-step non-interactive auth: `npx --yes n8nac init-auth --host <url> --api-key <key> [--sync-folder <path>]`
 - Default 2-step non-interactive project selection: `npx --yes n8nac init-project --project-id <id>|--project-name <name>|--project-index <n> [--sync-folder <path>]`
 - Optional 1-command non-interactive setup when the project is already known: `npx --yes n8nac instance add --yes --host <url> --api-key <key> --project-id <id>|--project-name <name>|--project-index <n> [--sync-folder <path>]`
@@ -41,6 +59,7 @@ Before using any `n8nac` workflow command, check whether the workspace is initia
 - `npx --yes n8nac init-project` can run interactively after `npx --yes n8nac init-auth`, or non-interactively when the project selector is known.
 
 ### Required Order
+
 1. Check for `n8nac-config.json`.
 2. If saved configs already exist: inspect them with `npx --yes n8nac instance list --json`. Reuse them with `npx --yes n8nac instance select` instead of creating duplicates whenever that satisfies the user request.
 3. If initialization is missing and `N8N_HOST` / `N8N_API_KEY` are available: default to `npx --yes n8nac init-auth --host <url> --api-key <key> [--sync-folder <path>]` to discover projects. Only use `npx --yes n8nac instance add --yes --host <url> --api-key <key> --project-id <id>|--project-name <name>|--project-index <n> [--sync-folder <path>]` when the project is already known.
@@ -81,6 +100,7 @@ n8n-as-code uses a **Git-like sync architecture**. The local code is the source 
    - `npx --yes n8nac push <path> --verify`: Push and immediately verify the live workflow against the local schema.
 
    > ⚠️ **CRITICAL — what `path` means**:
+   >
    > - Always use the full workflow file path including the `.workflow.ts` suffix.
    > - Use either the absolute path from `workflowDir` or the workspace-root-relative path that starts with `workflowDir`, for example `workflows/127_0_0_1_5678_yagr_l/personal/slack-notification.workflow.ts`.
    > - Do **not** pass a bare filename such as `slack-notification.workflow.ts` — there is no automatic scope prefix and the push will fail.
@@ -107,7 +127,7 @@ n8n-as-code uses a **Git-like sync architecture**. The local code is the source 
    - Works for workflows whose first trigger is a **Webhook**, **Chat Trigger**, or **Form Trigger**.
    - Does NOT work for Schedule or generic polling triggers (those cannot be called via HTTP).
 
-   ### ⚠️  Critical: Error Classification
+   ### ⚠️ Critical: Error Classification
 
    `n8nac test` classifies failures into three buckets:
 
@@ -136,6 +156,7 @@ n8n-as-code uses a **Git-like sync architecture**. The local code is the source 
    - `npx --yes n8nac resolve <id> --mode keep-incoming`: Force-pull remote version.
 
 ### Key Principles
+
 - **Explicit over automatic**: All operations are user-triggered or ai-agent-triggered.
 - **Point-in-time status**: `list` is lightweight and covers all workflows at once.
 - **Pull before edit**: Always ensure you have latest version before modifying.
@@ -154,58 +175,71 @@ If you skip the Pull step, your Push will be REJECTED by the Optimistic Concurre
 **⚠️ CRITICAL**: Before creating or editing ANY node, you MUST follow this protocol:
 
 ### Step 0: Pattern Discovery (Intelligence Gathering)
+
 ```bash
 npx --yes n8nac skills examples search "telegram chatbot"
 ```
+
 - **GOAL**: Don't reinvent the wheel. See how experts build it.
 - **ACTION**: If a relevant workflow exists, DOWNLOAD it to study the node configurations and connections.
 - **LEARNING**: extracting patterns > guessing parameters.
 
 ### Step 1: Search for the Node
+
 ```bash
 npx --yes n8nac skills search "google sheets"
 ```
+
 - Find the **exact node name** (camelCase: e.g., `googleSheets`)
 - Verify the node exists in current n8n version
 
 ### Step 2: Get Exact Schema
+
 ```bash
 npx --yes n8nac skills node-info googleSheets
 ```
+
 - Get **EXACT parameter names** (e.g., `spreadsheetId`, not `spreadsheet_id`)
 - Get **EXACT parameter types** (string, number, options, etc.)
 - Get **available operations/resources**
 - Get **required vs optional parameters**
 
 ### Step 3: Apply Schema as Absolute Truth
+
 - **CRITICAL (TYPE)**: The `type` field MUST EXACTLY match the `type` from schema
 - **CRITICAL (VERSION)**: Use HIGHEST `typeVersion` from schema
 - **PARAMETER NAMES**: Use exact names (e.g., `spreadsheetId` vs `spreadsheet_id`)
 - **NO HALLUCINATIONS**: Do not invent parameter names
 
 ### Step 4: Validate Before Finishing
+
 ```bash
 npx --yes n8nac skills validate workflow.workflow.ts
 ```
 
 ### Step 5: Verify After Push
+
 ```bash
 npx --yes n8nac verify <workflowId>
 ```
+
 - **Catches runtime errors** that local validate misses: non-existent typeVersion, invalid operation values, missing required params.
 - Tip: use `npx --yes n8nac push <workflowDir>/my-workflow.workflow.ts --verify` to do both in one command.
 
 ### Step 6: Inspect Webhook/Chat/Form Testability After Push
+
 ```bash
 npx --yes n8nac test-plan <workflowId>
 npx --yes n8nac test-plan <workflowId> --json
 ```
+
 - Determines whether the workflow is HTTP-testable.
 - Returns the trigger type, endpoints, and a suggested payload inferred from expressions.
 - The suggested payload is heuristic. Review it before relying on it.
 - For classic Webhook/Form triggers, the test URL often requires a manual arm step in the n8n editor before it will accept a request.
 
 ### Step 7: Test Webhook/Chat/Form Workflows After Push
+
 ```bash
 # STANDARD sequence — ALWAYS activate first, then test with --prod:
 npx --yes n8nac workflow activate <workflowId>
@@ -214,6 +248,7 @@ npx --yes n8nac test <workflowId> --prod
 # Without activation — ONLY if the test URL was manually armed in n8n editor. Do NOT use as default.
 npx --yes n8nac test <workflowId>
 ```
+
 - **⚠️ DEFAULT RULE: ALWAYS activate the workflow first and prefer `test <id> --prod`. Use bare `test <id>` only when the workflow is intentionally left inactive _and_ you have manually armed the test URL in the n8n editor.**
 - **Closes the dev cycle** for HTTP-triggered workflows.
 - **Class A exit 0** — config gap (credentials, model, env var): inform user, do NOT re-edit code.
@@ -270,31 +305,33 @@ This avoids loading 1500+ lines when you only need to patch 10.
 import { workflow, node, links } from '@n8n-as-code/transformer';
 
 @workflow({
-  name: 'Workflow Name',
-  active: false
+	name: 'Workflow Name',
+	active: false,
 })
 export class MyWorkflow {
-  @node({
-    name: 'Descriptive Name',
-    type: '/* EXACT from search */',
-    version: 4,
-    position: [250, 300]
-  })
-  MyNode = {
-    /* parameters from npx --yes n8nac skills node-info */
-  };
+	@node({
+		name: 'Descriptive Name',
+		type: '/* EXACT from search */',
+		version: 4,
+		position: [250, 300],
+	})
+	MyNode = {
+		/* parameters from npx --yes n8nac skills node-info */
+	};
 
-  @node({
-    name: 'Next Node',
-    type: '/* EXACT from search */',
-    version: 3
-  })
-  NextNode = { /* parameters */ };
+	@node({
+		name: 'Next Node',
+		type: '/* EXACT from search */',
+		version: 3,
+	})
+	NextNode = {
+		/* parameters */
+	};
 
-  @links()
-  defineRouting() {
-    this.MyNode.out(0).to(this.NextNode.in(0));
-  }
+	@links()
+	defineRouting() {
+		this.MyNode.out(0).to(this.NextNode.in(0));
+	}
 }
 ```
 
@@ -328,43 +365,80 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 
 @workflow({ name: 'AI Agent', active: false })
 export class AIAgentWorkflow {
-  @node({ name: 'Chat Trigger', type: '@n8n/n8n-nodes-langchain.chatTrigger', version: 1.4, position: [0, 0] })
-  ChatTrigger = {};
+	@node({
+		name: 'Chat Trigger',
+		type: '@n8n/n8n-nodes-langchain.chatTrigger',
+		version: 1.4,
+		position: [0, 0],
+	})
+	ChatTrigger = {};
 
-  @node({ name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', version: 3.1, position: [200, 0] })
-  AiAgent = {
-    promptType: 'define',
-    text: '={{ $json.chatInput }}',
-    hasOutputParser: true,  // REQUIRED when an output parser sub-node is connected
-    options: { systemMessage: 'You are a helpful assistant.' },
-  };
+	@node({
+		name: 'AI Agent',
+		type: '@n8n/n8n-nodes-langchain.agent',
+		version: 3.1,
+		position: [200, 0],
+	})
+	AiAgent = {
+		promptType: 'define',
+		text: '={{ $json.chatInput }}',
+		hasOutputParser: true, // REQUIRED when an output parser sub-node is connected
+		options: { systemMessage: 'You are a helpful assistant.' },
+	};
 
-  @node({ name: 'OpenAI Model', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', version: 1.3, position: [200, 200],
-    credentials: { openAiApi: { id: 'xxx', name: 'OpenAI' } } })
-  OpenaiModel = { model: { mode: 'list', value: 'gpt-4o-mini' }, options: {} };
+	@node({
+		name: 'OpenAI Model',
+		type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
+		version: 1.3,
+		position: [200, 200],
+		credentials: { openAiApi: { id: 'xxx', name: 'OpenAI' } },
+	})
+	OpenaiModel = { model: { mode: 'list', value: 'gpt-4o-mini' }, options: {} };
 
-  @node({ name: 'Memory', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow', version: 1.3, position: [300, 200] })
-  Memory = { sessionIdType: 'customKey', sessionKey: '={{ $execution.id }}', contextWindowLength: 10 };
+	@node({
+		name: 'Memory',
+		type: '@n8n/n8n-nodes-langchain.memoryBufferWindow',
+		version: 1.3,
+		position: [300, 200],
+	})
+	Memory = {
+		sessionIdType: 'customKey',
+		sessionKey: '={{ $execution.id }}',
+		contextWindowLength: 10,
+	};
 
-  @node({ name: 'Search Tool', type: 'n8n-nodes-base.httpRequestTool', version: 4.4, position: [400, 200] })
-  SearchTool = { url: 'https://api.example.com/search', toolDescription: 'Search for information' };
+	@node({
+		name: 'Search Tool',
+		type: 'n8n-nodes-base.httpRequestTool',
+		version: 4.4,
+		position: [400, 200],
+	})
+	SearchTool = { url: 'https://api.example.com/search', toolDescription: 'Search for information' };
 
-  @node({ name: 'Output Parser', type: '@n8n/n8n-nodes-langchain.outputParserStructured', version: 1.3, position: [500, 200] })
-  OutputParser = { schemaType: 'manual', inputSchema: '{ "type": "object", "properties": { "answer": { "type": "string" } } }' };
+	@node({
+		name: 'Output Parser',
+		type: '@n8n/n8n-nodes-langchain.outputParserStructured',
+		version: 1.3,
+		position: [500, 200],
+	})
+	OutputParser = {
+		schemaType: 'manual',
+		inputSchema: '{ "type": "object", "properties": { "answer": { "type": "string" } } }',
+	};
 
-  @links()
-  defineRouting() {
-    // Regular data flow: use .out(0).to(target.in(0))
-    this.ChatTrigger.out(0).to(this.AiAgent.in(0));
+	@links()
+	defineRouting() {
+		// Regular data flow: use .out(0).to(target.in(0))
+		this.ChatTrigger.out(0).to(this.AiAgent.in(0));
 
-    // AI sub-node connections: ALWAYS use .uses(), NEVER .out().to() for these
-    this.AiAgent.uses({
-      ai_languageModel: this.OpenaiModel.output,   // single ref → this.Node.output
-      ai_memory: this.Memory.output,               // single ref
-      ai_outputParser: this.OutputParser.output,    // single ref
-      ai_tool: [this.SearchTool.output],            // array ref → [this.Node.output, ...]
-    });
-  }
+		// AI sub-node connections: ALWAYS use .uses(), NEVER .out().to() for these
+		this.AiAgent.uses({
+			ai_languageModel: this.OpenaiModel.output, // single ref → this.Node.output
+			ai_memory: this.Memory.output, // single ref
+			ai_outputParser: this.OutputParser.output, // single ref
+			ai_tool: [this.SearchTool.output], // array ref → [this.Node.output, ...]
+		});
+	}
 }
 ```
 
@@ -393,16 +467,19 @@ export class AIAgentWorkflow {
 ## ✅ Best Practices
 
 ### Node Parameters
+
 - ✅ Always check schema before writing
 - ✅ Use exact parameter names from schema
 - ❌ Never guess parameter names
 
 ### Expressions (Modern Syntax)
+
 - ✅ Use: `{{ $json.fieldName }}` (modern)
 - ✅ Use: `{{ $('NodeName').item.json.field }}` (specific nodes)
 - ❌ Avoid: `{{ $node["Name"].json.field }}` (legacy)
 
 ### Node Naming
+
 - ✅ "Action Resource" pattern (e.g., "Get Customers", "Send Email")
 - ❌ Avoid generic names like "Node1", "HTTP Request"
 
@@ -419,21 +496,24 @@ When an AI agent uses tool nodes:
 
 ## 📚 Available Tools
 
-
 ### 🔍 Unified Search (PRIMARY TOOL)
+
 ```bash
 npx --yes n8nac skills search "google sheets"
 npx --yes n8nac skills search "how to use RAG"
 ```
+
 **ALWAYS START HERE.** Deep search across nodes, docs, and tutorials.
 
 ### 🛠️ Get Node Schema
+
 ```bash
 npx --yes n8nac skills node-info googleSheets  # Complete info
 npx --yes n8nac skills node-schema googleSheets  # Quick reference
 ```
 
 ### 🌐 Community Workflows
+
 ```bash
 npx --yes n8nac skills examples search "slack notification"
 npx --yes n8nac skills examples info 916
@@ -441,48 +521,59 @@ npx --yes n8nac skills examples download 4365
 ```
 
 ### 📖 Documentation
+
 ```bash
 npx --yes n8nac skills docs "OpenAI"
 npx --yes n8nac skills guides "webhook"
 ```
 
 ### ✅ Validate
+
 ```bash
 npx --yes n8nac skills validate workflow.workflow.ts
 ```
 
 ### 🔎 Verify Live Workflow (post-push)
+
 ```bash
 npx --yes n8nac verify <workflowId>          # Fetch from n8n + validate against schema
 npx --yes n8nac push <workflowDir>/my-workflow.workflow.ts --verify   # Push then verify in one step
 ```
+
 Catches runtime errors (invalid typeVersion, bad operation values, missing required params) **before** the user notices them in the UI.
 
 ### 🧭 Inspect Webhook/Chat/Form Test Plan (post-push)
+
 ```bash
 npx --yes n8nac test-plan <workflowId>         # Detect trigger + testability + suggested payload
 npx --yes n8nac test-plan <workflowId> --json  # Structured output for agents
 ```
+
 Use this first when an agent needs to know whether a workflow can be tested and what payload to try.
 
 ### 🧪 Test Webhook/Chat/Form Workflows (post-push)
+
 ```bash
 npx --yes n8nac test <workflowId>              # Trigger test-mode URL, show result
 npx --yes n8nac test <workflowId> --data '{"key":"value"}'  # Pass request body
 npx --yes n8nac test <workflowId> --query '{"key":"value"}' # Explicit query params for GET/HEAD webhooks
 npx --yes n8nac test <workflowId> --prod       # Use production URL instead
 ```
+
 Closes the dev cycle for webhook/chat/form workflows. Exits 0 on success, Class A (config gap — inform user), or runtime-state issues such as an unarmed test webhook. Exits 1 only on Class B (wiring error — fix and re-test). Prefer `npx --yes n8nac test-plan` first when the payload is unclear. For GET/HEAD webhooks, prefer `npx --yes n8nac test --query <json>`; `--data` also maps to query params for backward compatibility.
 If `npx --yes n8nac test` says the webhook is not registered, do not blindly rewrite the workflow. First decide whether the test URL needs manual arming in the editor or whether the production webhook is still unpublished.
 
 ### 🧾 Inspect Executions (debug what happened on the n8n server)
+
 ```bash
 npx --yes n8nac execution list --workflow-id <id> --limit 5 --json    # Recent executions for one workflow
 npx --yes n8nac execution get <executionId> --include-data --json      # Full execution detail and run data
 ```
+
 Use this immediately after a webhook returns 2xx but the workflow still appears broken. A successful HTTP trigger only means n8n accepted the request; the execution can still fail later inside the workflow.
 
 ### 🔑 Credential Management (resolve Class A gaps without opening the n8n UI)
+
 ```bash
 npx --yes n8nac workflow credential-required <id> --json            # List missing credentials (exit 1 if any missing)
 npx --yes n8nac credential schema <type>                            # Discover required fields for a type
@@ -491,10 +582,12 @@ npx --yes n8nac credential create --type <type> --name <name> --file cred.json -
 npx --yes n8nac credential delete <id>                              # Delete a credential
 npx --yes n8nac workflow activate <id>                              # Activate workflow after credentials provisioned
 ```
+
 **Full autonomous loop:** push workflow → `workflow credential-required <id> --json` (exit 1 = missing, act) → `credential schema <type>` → ask user for secret values → `credential create --file` → `workflow activate <id>` → `test <id>`. Workflow blocked by a Class A error? Use `credential schema <type>` to discover required fields, write them to a JSON file, then run `credential create` to provision the credential programmatically. If testing a classic Webhook/Form trigger via the test URL, expect a manual arm step in the n8n editor before the request will succeed. **Never pass secrets inline via --data** — use --file instead (keeps secrets out of shell history).
 If `credential create` fails, read the returned validation message and change the payload before retrying. Never rerun the same failing command unchanged. If a subcommand is unfamiliar, run `npx --yes n8nac <subcommand> --help` instead of inventing flags.
 
 ---
 
 > **When in doubt**: `npx --yes n8nac skills node-info <nodeName>` — the schema is always the source of truth.
+
 <!-- n8n-as-code-end -->
