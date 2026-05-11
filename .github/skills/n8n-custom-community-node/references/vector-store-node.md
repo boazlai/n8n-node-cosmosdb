@@ -86,16 +86,16 @@ async execute(): Promise<INodeExecutionData[][]> {
 
 ```typescript
 const embeddings = (await this.getInputConnectionData(NodeConnectionTypes.AiEmbedding, 0)) as {
-    embedQuery(text: string): Promise<number[]>;
+	embedQuery(text: string): Promise<number[]>;
 };
 
 const useReranker = this.getNodeParameter('useReranker', 0, false) as boolean;
 
 const reranker = useReranker
-    ? ((await this.getInputConnectionData(NodeConnectionTypes.AiReranker, 0)) as
-            | { compressDocuments(docs: Doc[], query: string): Promise<Doc[]> }
-            | undefined)
-    : undefined;
+	? ((await this.getInputConnectionData(NodeConnectionTypes.AiReranker, 0)) as
+			| { compressDocuments(docs: Doc[], query: string): Promise<Doc[]> }
+			| undefined)
+	: undefined;
 ```
 
 **Common mistake**: adding `useReranker` but still calling `getInputConnectionData(AiReranker, 0)` unconditionally. When no reranker is connected, this fails even though the toggle is off. Always read the toggle first, then guard the lookup.
@@ -153,13 +153,13 @@ Expected: `DynamicStructuredTool`, `items[0]?.json?.input`, and `embedQuery` all
 
 See `references/native-vs-custom.md` for the full reverse-engineered comparison from n8n v2.12.3 internals.
 
-| Native utility | Available to community node? | Replacement |
-|---|---|---|
-| `logWrapper` from `@n8n/ai-utilities` | ❌ Not importable (pnpm sandbox) | Manual `addInputData` / `addOutputData` in `supplyData.func` |
-| `createToolFromNode` from `@n8n/ai-utilities` | ❌ Not importable | Use `DynamicStructuredTool` directly |
-| Zod schema via `require('zod')` | ⚠️ Cross-instance mismatch | Plain JSON Schema object `{ type: 'object', ... }` |
-| `getInputConnectionData` in `execute()` | ✅ Works | — |
-| `nodeNameToToolName` from `n8n-workflow` | ✅ Works | — |
+| Native utility                                | Available to community node?     | Replacement                                                  |
+| --------------------------------------------- | -------------------------------- | ------------------------------------------------------------ |
+| `logWrapper` from `@n8n/ai-utilities`         | ❌ Not importable (pnpm sandbox) | Manual `addInputData` / `addOutputData` in `supplyData.func` |
+| `createToolFromNode` from `@n8n/ai-utilities` | ❌ Not importable                | Use `DynamicStructuredTool` directly                         |
+| Zod schema via `require('zod')`               | ⚠️ Cross-instance mismatch       | Plain JSON Schema object `{ type: 'object', ... }`           |
+| `getInputConnectionData` in `execute()`       | ✅ Works                         | —                                                            |
+| `nodeNameToToolName` from `n8n-workflow`      | ✅ Works                         | —                                                            |
 
 ---
 
@@ -212,8 +212,8 @@ npm run dev   # starts n8n at localhost:5678 with hot-reload
 | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | Cluster nodes — sub-nodes  | https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/                                          |
 | Vector Store Retriever     | https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.retrievervectorstore/ |
-| Embeddings sub-nodes       | https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/                                         |
+| Embeddings sub-nodes       | https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/                                          |
 | Reranker Cohere (example)  | https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.rerankercohere/       |
 | Programmatic node tutorial | https://docs.n8n.io/integrations/creating-nodes/build/programmatic-style-node/                             |
 | CLI tool (n8n-node)        | https://docs.n8n.io/integrations/creating-nodes/build/n8n-node/                                            |
-| Node linter                | https://docs.n8n.io/integrations/creating-nodes/test/node-linter/                                         |
+| Node linter                | https://docs.n8n.io/integrations/creating-nodes/test/node-linter/                                          |

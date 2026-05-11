@@ -46,15 +46,15 @@ Create a sidecar `<YourNode>.node.json` next to the `.ts` source (e.g. `nodes/My
 
 ```json
 {
-  "categories": ["AI"],
-  "subcategories": {
-    "AI": ["Tools"],
-    "Tools": ["Other Tools"]
-  },
-  "resources": {
-    "primaryDocumentation": [],
-    "credentialDocumentation": []
-  }
+	"categories": ["AI"],
+	"subcategories": {
+		"AI": ["Tools"],
+		"Tools": ["Other Tools"]
+	},
+	"resources": {
+		"primaryDocumentation": [],
+		"credentialDocumentation": []
+	}
 }
 ```
 
@@ -69,9 +69,15 @@ The scaffolded `gulpfile.js` only copies images by default. Extend it to also co
 ```javascript
 const { task, src, dest, parallel } = require('gulp');
 
-function copyNodeIcons() { return src('nodes/**/*.{png,svg}').pipe(dest('dist/nodes')); }
-function copyCredIcons() { return src('credentials/**/*.{png,svg}').pipe(dest('dist/credentials')); }
-function copyNodeCodex() { return src('nodes/**/*.json').pipe(dest('dist/nodes')); }
+function copyNodeIcons() {
+	return src('nodes/**/*.{png,svg}').pipe(dest('dist/nodes'));
+}
+function copyCredIcons() {
+	return src('credentials/**/*.{png,svg}').pipe(dest('dist/credentials'));
+}
+function copyNodeCodex() {
+	return src('nodes/**/*.json').pipe(dest('dist/nodes'));
+}
 
 task('build:icons', parallel(copyNodeIcons, copyCredIcons, copyNodeCodex));
 ```
@@ -79,10 +85,12 @@ task('build:icons', parallel(copyNodeIcons, copyCredIcons, copyNodeCodex));
 ### Parameters that can never show ✨
 
 Even with a correct codex, these parameter types are hardcoded to never show the button:
+
 - `options` (dropdown menus)
 - `credentialsSelect`
 
 And these parameter paths are always excluded:
+
 - `parameters.toolName`
 - `parameters.description`
 - `parameters.toolDescription`
