@@ -183,6 +183,8 @@ See `references/native-vs-custom.md` for the full reverse-engineered comparison 
 
 9. **`logWrapper` import fails** — it lives in n8n's pnpm sandbox, not resolvable from custom node paths. Use manual `addInputData`/`addOutputData` tracking instead.
 
+10. **Missing sidecar `.node.json` (✨ button never appears)** — for nodes loaded from a CUSTOM package, n8n's directory-loader ignores `node.description.codex` at runtime and reads a sidecar `<YourNode>.node.json` file instead. Without it the codex becomes `{ categories: ["Custom Nodes"] }` and the ✨ button is blocked. Create the sidecar with `categories: ["AI"]` and `subcategories.AI: ["Tools"]` (see `references/tool-node.md` → "fromAI Override Button (✨)" for the full template and gulpfile step). Additionally: do NOT include `"Vector Stores"` in `subcategories.AI` — even with correct categories, that entry blocks the ✨ button at the frontend check.
+
 ---
 
 ## Starter Template

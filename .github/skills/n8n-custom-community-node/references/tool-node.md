@@ -32,12 +32,72 @@ Use a structured input schema for the tool. Keep the schema small and explicit. 
 
 Return ordinary n8n items from runtime execution. Preserve arrays and objects as structured values instead of stringifying them unless the downstream contract explicitly requires a string.
 
+## fromAI Override Button (✨)
+
+n8n shows a ✨ ("Let AI generate value") button on string parameters for nodes that belong to the `AI` category with `subcategories.AI` containing `Tools`. This lets users opt individual parameters into AI-generated values at design time.
+
+### Why it does not appear on CUSTOM nodes by default
+
+n8n's `n8n-core` directory-loader **ignores** `node.description.codex` for any node loaded from a CUSTOM package (nodes mounted under `custom/node_modules/`). Instead it reads a sidecar `.node.json` file from the same directory as the built `.node.js`, then appends `"Custom Nodes"` to whatever categories it finds. If no sidecar exists, the runtime codex becomes `{ categories: ["Custom Nodes"] }` and the ✨ check fails.
+
+### How to enable it
+
+Create a sidecar `<YourNode>.node.json` next to the `.ts` source (e.g. `nodes/MyTool/MyTool.node.json`):
+
+```json
+{
+  "categories": ["AI"],
+  "subcategories": {
+    "AI": ["Tools"],
+    "Tools": ["Other Tools"]
+  },
+  "resources": {
+    "primaryDocumentation": [],
+    "credentialDocumentation": []
+  }
+}
+```
+
+> At runtime, n8n appends `"Custom Nodes"` → categories becomes `["AI", "Custom Nodes"]`, which passes the ✨ check.
+
+**Important**: Do NOT include `"Vector Stores"` in `subcategories.AI`. The ✨ button is explicitly blocked for Vector Stores in the n8n frontend.
+
+### Copy the JSON to dist in the build step
+
+The scaffolded `gulpfile.js` only copies images by default. Extend it to also copy `*.json` files:
+
+```javascript
+const { task, src, dest, parallel } = require('gulp');
+
+function copyNodeIcons() { return src('nodes/**/*.{png,svg}').pipe(dest('dist/nodes')); }
+function copyCredIcons() { return src('credentials/**/*.{png,svg}').pipe(dest('dist/credentials')); }
+function copyNodeCodex() { return src('nodes/**/*.json').pipe(dest('dist/nodes')); }
+
+task('build:icons', parallel(copyNodeIcons, copyCredIcons, copyNodeCodex));
+```
+
+### Parameters that can never show ✨
+
+Even with a correct codex, these parameter types are hardcoded to never show the button:
+- `options` (dropdown menus)
+- `credentialsSelect`
+
+And these parameter paths are always excluded:
+- `parameters.toolName`
+- `parameters.description`
+- `parameters.toolDescription`
+
+---
+
 ## Common Pitfalls
 
 - Building only `supplyData()` and forgetting `execute()`.
 - Registering `AiTool` output but still wiring the node like a standard `Main` node.
 - Returning stringified JSON blobs instead of structured data.
 - Leaving stale `dist/` output in place and testing the wrong artifact.
+- **Missing sidecar `.node.json`** — `node.description.codex` is silently ignored for CUSTOM nodes. Without the sidecar, the ✨ button never appears regardless of what is set in the TypeScript source.
+- **`"Vector Stores"` in `subcategories.AI`** — blocks the ✨ button even if `"AI"` and `"Tools"` are correct.
+- **Sidecar not copied to `dist/`** — the default `gulpfile.js` only copies images; add a `copyNodeCodex` task to copy `*.json` files.
 
 ## Starter Template
 

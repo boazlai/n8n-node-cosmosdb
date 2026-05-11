@@ -131,6 +131,7 @@ If the user wants to publish the package or copy it to another workspace:
 - Mixing `Main` outputs with AI-tool-only behavior.
 - Baking repo-specific examples into the reusable template.
 - Publishing a package whose README does not explain credentials or compatibility.
+- **Gulpfile only copies images** — the scaffolded `gulpfile.js` includes tasks for `*.png` and `*.svg` but not `*.json`. Any sidecar `.node.json` file (needed for the ✨ button on CUSTOM nodes — see `references/tool-node.md`) will not reach `dist/` unless you add a `copyNodeCodex` task. See the gulpfile snippet in `references/tool-node.md` → "fromAI Override Button (✨)".
 
 ---
 
