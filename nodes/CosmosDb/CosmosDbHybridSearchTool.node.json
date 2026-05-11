@@ -1,0 +1,11 @@
+{
+	"categories": ["AI"],
+	"subcategories": {
+		"AI": ["Tools", "Root Nodes"],
+		"Tools": ["Other Tools"]
+	},
+	"resources": {
+		"primaryDocumentation": [],
+		"credentialDocumentation": []
+	}
+}

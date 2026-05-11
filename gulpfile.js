@@ -1,16 +1,15 @@
-const path = require('path');
-const { task, src, dest } = require('gulp');
+const { task, src, dest, parallel } = require('gulp');
 
-task('build:icons', copyIcons);
+task('build:icons', parallel(copyNodeIcons, copyCredIcons, copyNodeCodex));
 
-function copyIcons() {
-	const nodeSource = path.resolve('nodes', '**', '*.{png,svg}');
-	const nodeDestination = path.resolve('dist', 'nodes');
+function copyNodeIcons() {
+	return src('nodes/**/*.{png,svg}').pipe(dest('dist/nodes'));
+}
 
-	src(nodeSource).pipe(dest(nodeDestination));
+function copyCredIcons() {
+	return src('credentials/**/*.{png,svg}').pipe(dest('dist/credentials'));
+}
 
-	const credSource = path.resolve('credentials', '**', '*.{png,svg}');
-	const credDestination = path.resolve('dist', 'credentials');
-
-	return src(credSource).pipe(dest(credDestination));
+function copyNodeCodex() {
+	return src('nodes/**/*.json').pipe(dest('dist/nodes'));
 }
