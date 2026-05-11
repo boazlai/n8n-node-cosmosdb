@@ -221,7 +221,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 		codex: {
 			categories: ['AI'],
 			subcategories: {
-				AI: ['Vector Stores', 'Tools', 'Root Nodes'],
+				AI: ['Tools', 'Root Nodes'],
 				Tools: ['Other Tools'],
 			},
 		},
