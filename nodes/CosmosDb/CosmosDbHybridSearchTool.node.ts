@@ -8,14 +8,43 @@ import type {
 	ILoadOptionsFunctions,
 	INodePropertyOptions,
 	IDataObject,
+	FromAIArgument,
 } from 'n8n-workflow';
-import { NodeConnectionTypes, NodeOperationError, nodeNameToToolName } from 'n8n-workflow';
+import {
+	NodeConnectionTypes,
+	NodeOperationError,
+	nodeNameToToolName,
+	traverseNodeParametersWithParamNames,
+} from 'n8n-workflow';
 import { CosmosClient } from '@azure/cosmos';
 import type { TokenCredential } from '@azure/core-auth';
 
 interface ICosmosTokenData {
 	accessToken: string;
 	expiresAt?: string;
+}
+
+function parseTokenExpiryMs(tokenData?: Record<string, unknown>): number | undefined {
+	if (!tokenData) {
+		return undefined;
+	}
+
+	const rawExpiry = tokenData.expires_at ?? tokenData.expires_on ?? tokenData.expiry_date;
+	if (rawExpiry === undefined || rawExpiry === null) {
+		return undefined;
+	}
+
+	if (typeof rawExpiry === 'number' && Number.isFinite(rawExpiry)) {
+		return rawExpiry > 1_000_000_000_000 ? rawExpiry : rawExpiry * 1000;
+	}
+
+	const numericExpiry = Number(rawExpiry);
+	if (Number.isFinite(numericExpiry)) {
+		return numericExpiry > 1_000_000_000_000 ? numericExpiry : numericExpiry * 1000;
+	}
+
+	const dateExpiry = Date.parse(String(rawExpiry));
+	return Number.isNaN(dateExpiry) ? undefined : dateExpiry;
 }
 
 // ─── Embedding / Reranker interfaces ────────────────────────────────────────
@@ -69,12 +98,51 @@ function createEntraIdCosmosTokenCredential(
 	context: {
 		getCredentials(name: string): Promise<IDataObject>;
 		getNode(): any;
+		helpers?: {
+			requestWithAuthentication?: (
+				credentialsType: string,
+				requestOptions: IDataObject,
+				additionalData?: IDataObject,
+			) => Promise<unknown>;
+		};
 	},
 	missingTokenMessage = 'No valid Entra ID access token found.',
 ): N8nCosmosTokenCredential {
 	return new N8nCosmosTokenCredential(async () => {
-		const refreshedCredentials = await context.getCredentials('cosmosDbEntraIdApi');
-		const refreshedTokenData = refreshedCredentials.oauthTokenData as Record<string, unknown>;
+		let refreshedCredentials = await context.getCredentials('cosmosDbEntraIdApi');
+		let refreshedTokenData = refreshedCredentials.oauthTokenData as Record<string, unknown>;
+
+		const refreshBeforeExpirySeconds = Math.max(
+			60,
+			Number(refreshedCredentials.refreshBeforeExpirySeconds ?? 900) || 900,
+		);
+		const expiresOnMs = parseTokenExpiryMs(refreshedTokenData);
+		const shouldRefresh =
+			typeof expiresOnMs === 'number' &&
+			expiresOnMs - Date.now() <= refreshBeforeExpirySeconds * 1000;
+
+		if (shouldRefresh && context.helpers?.requestWithAuthentication) {
+			const endpoint = String(refreshedCredentials.endpoint ?? '').trim();
+			if (endpoint) {
+				try {
+					await context.helpers.requestWithAuthentication(
+						'cosmosDbEntraIdApi',
+						{
+							method: 'GET',
+							url: endpoint,
+							timeout: 10000,
+							json: false,
+						},
+						{},
+					);
+				} catch {
+					// Ignore network/auth response errors here; refresh may still have been performed.
+				}
+
+				refreshedCredentials = await context.getCredentials('cosmosDbEntraIdApi');
+				refreshedTokenData = refreshedCredentials.oauthTokenData as Record<string, unknown>;
+			}
+		}
 
 		if (!refreshedTokenData?.access_token) {
 			throw new NodeOperationError(context.getNode(), missingTokenMessage);
@@ -174,6 +242,12 @@ function valueToRerankText(value: unknown): string {
 	if (typeof value === 'string') return value;
 	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
 	return JSON.stringify(value);
+}
+
+function toTrimmedString(value: unknown, fallback = ''): string {
+	if (typeof value === 'string') return value.trim();
+	if (value === null || value === undefined) return fallback;
+	return String(value).trim();
 }
 
 async function rerankDocuments<T extends Record<string, unknown>>(
@@ -320,12 +394,31 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				description: 'The document field used for full-text RRF scoring',
 			},
 			{
+				displayName: 'Vector Query',
+				name: 'vectorQuery',
+				type: 'string',
+				default: '',
+				placeholder: 'e.g. accommodation application procedure HKU Cedars',
+				description:
+					'Semantic vector query used for embeddings. Click Determine by AI model only when the AI Agent should provide this value.',
+			},
+			{
+				displayName: 'Full Text Query',
+				name: 'fullTextQuery',
+				type: 'string',
+				default: '',
+				placeholder: 'e.g. accommodation application procedure',
+				description:
+					'Keyword query used for full-text ranking. Click Determine by AI model only when the AI Agent should provide this value.',
+			},
+			{
 				displayName: 'Top K',
 				name: 'topK',
 				type: 'number',
 				default: 10,
 				typeOptions: { minValue: 1, maxValue: 1000 },
 				description: 'Number of top results to retrieve',
+				hint: 'AI-provided topK is used only when Top K is set to Determine by AI model.',
 			},
 			{
 				displayName: 'Use Reranker',
@@ -531,18 +624,32 @@ export class CosmosDbHybridSearchTool implements INodeType {
 			itemIndex,
 			'masterKey',
 		) as string;
-		const databaseName = (this.getNodeParameter('databaseName', itemIndex, '') as string).trim();
-		const containerName = (this.getNodeParameter('containerName', itemIndex, '') as string).trim();
-		const vectorFieldName = (
-			this.getNodeParameter('vectorFieldName', itemIndex, 'vector') as string
-		).trim();
-		const textFieldName = (
-			this.getNodeParameter('textFieldName', itemIndex, 'text') as string
-		).trim();
+		const databaseName = toTrimmedString(this.getNodeParameter('databaseName', itemIndex, ''), '');
+		const containerName = toTrimmedString(
+			this.getNodeParameter('containerName', itemIndex, ''),
+			'',
+		);
+		const vectorFieldName = toTrimmedString(
+			this.getNodeParameter('vectorFieldName', itemIndex, 'vector'),
+			'',
+		);
+		const textFieldName = toTrimmedString(
+			this.getNodeParameter('textFieldName', itemIndex, 'text'),
+			'',
+		);
+		const nodeVectorQuery = toTrimmedString(
+			this.getNodeParameter('vectorQuery', itemIndex, ''),
+			'',
+		);
+		const nodeFullTextQuery = toTrimmedString(
+			this.getNodeParameter('fullTextQuery', itemIndex, ''),
+			'',
+		);
 		const topK = this.getNodeParameter('topK', itemIndex, 10) as number;
-		const manualToolDescription = (
-			this.getNodeParameter('toolDescription', itemIndex, '') as string
-		).trim();
+		const manualToolDescription = toTrimmedString(
+			this.getNodeParameter('toolDescription', itemIndex, ''),
+			'',
+		);
 		const options = this.getNodeParameter('options', itemIndex, {}) as Record<string, unknown>;
 
 		const partitionKeyField = ((options.partitionKeyField as string) || 'category').trim();
@@ -611,13 +718,123 @@ export class CosmosDbHybridSearchTool implements INodeType {
 		// Tool name derived from the node's display name (native nodes v1.3+ pattern)
 		const toolName = nodeNameToToolName(this.getNode());
 
-		const toolDescription =
+		const fromAiArguments = new Map<string, FromAIArgument>();
+		traverseNodeParametersWithParamNames(this.getNode().parameters, fromAiArguments);
+		const defaultVectorQueryDescription = 'semantic query describing user intent';
+		const defaultFullTextQueryDescription = 'keyword query for full-text search (max 5 words)';
+		const getFromAiDescription = (
+			parameterNames: string | string[],
+			fallback: string,
+			suffix?: string,
+		) => {
+			const names = Array.isArray(parameterNames) ? parameterNames : [parameterNames];
+			const description = names
+				.map((parameterName) => fromAiArguments.get(parameterName)?.description?.trim())
+				.find(Boolean);
+
+			if (!description) return fallback;
+
+			return suffix ? `${description}\n\n${suffix}` : description;
+		};
+		const fromAiDescriptionLines = Array.from(fromAiArguments.entries())
+			.map(([parameterName, argument]) => {
+				const description = argument.description?.trim();
+				return description ? `- ${parameterName}: ${description}` : undefined;
+			})
+			.filter(Boolean)
+			.join('\n');
+		const hasFromAiParameter = (parameterName: string): boolean => {
+			const argument = fromAiArguments.get(parameterName);
+			return Boolean(argument?.key?.trim());
+		};
+
+		const baseToolDescription =
 			manualToolDescription ||
 			`Search Azure Cosmos DB container "${containerName}" in database "${databaseName}" ` +
 				`using hybrid full-text and vector search. ` +
-				`Provide two inputs: "vector" — a simplified, semantically clear version of the user question for embedding; ` +
-				`and "fullText" — up to 5 space-separated keywords for full-text keyword search. ` +
+				`Use the values configured on this node. Only provide tool input fields that are set to Determine by AI model. ` +
 				`Returns up to ${topK} results ranked by combined semantic and keyword relevance.`;
+		const toolDescription = fromAiDescriptionLines
+			? `${baseToolDescription}\n\nConfigured From AI field descriptions:\n${fromAiDescriptionLines}`
+			: baseToolDescription;
+
+		const canOverrideVectorQueryFromAi = hasFromAiParameter('vectorQuery');
+		const canOverrideFullTextQueryFromAi = hasFromAiParameter('fullTextQuery');
+		const canOverrideTopKFromAi = hasFromAiParameter('topK');
+		const canOverridePartitionKeyFieldFromAi =
+			hasFromAiParameter('partitionKeyField') || hasFromAiParameter('options.partitionKeyField');
+		const canOverridePartitionKeyValueFromAi =
+			hasFromAiParameter('partitionKeyValue') || hasFromAiParameter('options.partitionKeyValue');
+		const canOverrideAdditionalFiltersFromAi =
+			hasFromAiParameter('additionalFilters') || hasFromAiParameter('options.additionalFilters');
+		const canOverrideFieldsToReturnFromAi =
+			hasFromAiParameter('fieldsToReturn') || hasFromAiParameter('options.fieldsToReturn');
+
+		const schemaProperties: Record<string, unknown> = {};
+		const schemaRequired: string[] = [];
+
+		if (canOverrideVectorQueryFromAi) {
+			schemaProperties.vectorQuery = {
+				type: 'string',
+				description: getFromAiDescription('vectorQuery', defaultVectorQueryDescription),
+			};
+			schemaRequired.push('vectorQuery');
+		}
+
+		if (canOverrideFullTextQueryFromAi) {
+			schemaProperties.fullTextQuery = {
+				type: 'string',
+				description: getFromAiDescription('fullTextQuery', defaultFullTextQueryDescription),
+			};
+			schemaRequired.push('fullTextQuery');
+		}
+
+		if (canOverrideTopKFromAi) {
+			schemaProperties.topK = {
+				type: 'number',
+				description: getFromAiDescription('topK', 'Maximum number of results to return.'),
+			};
+		}
+
+		if (canOverridePartitionKeyFieldFromAi) {
+			schemaProperties.partitionKeyField = {
+				type: 'string',
+				description: getFromAiDescription(
+					['options.partitionKeyField', 'partitionKeyField'],
+					'Optional partition key field name used for filtering.',
+				),
+			};
+		}
+
+		if (canOverridePartitionKeyValueFromAi) {
+			schemaProperties.partitionKeyValue = {
+				type: 'string',
+				description: getFromAiDescription(
+					['options.partitionKeyValue', 'partitionKeyValue'],
+					'Optional partition key value to filter results.',
+				),
+			};
+		}
+
+		if (canOverrideAdditionalFiltersFromAi) {
+			schemaProperties.additionalFilters = {
+				type: 'string',
+				description: getFromAiDescription(
+					['options.additionalFilters', 'additionalFilters'],
+					'Optional Cosmos DB SQL filter conditions without the WHERE keyword.',
+				),
+			};
+		}
+
+		if (canOverrideFieldsToReturnFromAi) {
+			schemaProperties.fieldsToReturn = {
+				type: 'string',
+				description: getFromAiDescription(
+					['options.fieldsToReturn', 'fieldsToReturn'],
+					'Optional comma-separated fields to return instead of full documents.',
+				),
+			};
+		}
 
 		// Helper to strip unwanted fields from output documents
 		const stripOutput = (doc: Record<string, unknown>): Record<string, unknown> => {
@@ -646,7 +863,15 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				name: string;
 				description: string;
 				schema: unknown;
-				func: (input: { vector: string; fullText: string }) => Promise<string>;
+				func: (input: {
+					vector: string;
+					fullText: string;
+					topK?: number;
+					partitionKeyField?: string;
+					partitionKeyValue?: string;
+					additionalFilters?: string;
+					fieldsToReturn?: string;
+				}) => Promise<string>;
 			}) => object;
 		};
 
@@ -656,49 +881,117 @@ export class CosmosDbHybridSearchTool implements INodeType {
 			// Plain JSON Schema — avoids cross-module Zod instanceof mismatch
 			schema: {
 				type: 'object',
-				properties: {
-					vector: {
-						type: 'string',
-						description:
-							'Semantically clear version of the user question for vector embedding search (e.g. "how to register a smart card for CCMR access")',
-					},
-					fullText: {
-						type: 'string',
-						description:
-							'Up to 5 space-separated keywords for full-text keyword search (e.g. "smart card register CCMR access")',
-					},
-				},
-				required: ['vector', 'fullText'],
+				properties: schemaProperties,
+				required: schemaRequired,
+				additionalProperties: false,
 			},
-			func: async ({ vector, fullText }: { vector: string; fullText: string }): Promise<string> => {
+			func: async ({
+				vectorQuery,
+				fullTextQuery,
+				vector,
+				fullText,
+				topK: inputTopK,
+				partitionKeyField: inputPartitionKeyField,
+				partitionKeyValue: inputPartitionKeyValue,
+				additionalFilters: inputAdditionalFilters,
+				fieldsToReturn: inputFieldsToReturn,
+			}: {
+				vectorQuery?: string;
+				fullTextQuery?: string;
+				vector?: string;
+				fullText?: string;
+				topK?: number;
+				partitionKeyField?: string;
+				partitionKeyValue?: string;
+				additionalFilters?: string;
+				fieldsToReturn?: string;
+			}): Promise<string> => {
+				const effectiveVectorQuery = (
+					canOverrideVectorQueryFromAi
+						? String(vectorQuery ?? vector ?? nodeVectorQuery)
+						: nodeVectorQuery
+				).trim();
+				const candidateFullTextQuery = (
+					canOverrideFullTextQueryFromAi
+						? String(fullTextQuery ?? fullText ?? nodeFullTextQuery ?? effectiveVectorQuery)
+						: String(nodeFullTextQuery || effectiveVectorQuery)
+				).trim();
+				const effectiveFullTextQuery = candidateFullTextQuery || effectiveVectorQuery;
+				const effectiveTopK =
+					canOverrideTopKFromAi && Number.isFinite(Number(inputTopK)) && Number(inputTopK) > 0
+						? Number(inputTopK)
+						: topK;
+				const effectivePartitionKeyField = String(
+					canOverridePartitionKeyFieldFromAi
+						? (inputPartitionKeyField ?? partitionKeyField)
+						: partitionKeyField,
+				).trim();
+				const effectivePartitionKeyValue = String(
+					canOverridePartitionKeyValueFromAi
+						? (inputPartitionKeyValue ?? partitionKeyValue)
+						: partitionKeyValue,
+				).trim();
+				const effectiveAdditionalFilters = String(
+					canOverrideAdditionalFiltersFromAi
+						? (inputAdditionalFilters ?? additionalFilters)
+						: additionalFilters,
+				).trim();
+				const effectiveFieldsToReturn = String(
+					canOverrideFieldsToReturnFromAi
+						? (inputFieldsToReturn ?? fieldsToReturn)
+						: fieldsToReturn,
+				).trim();
 				// Track tool invocation input in n8n execution data
 				const { index } = context.addInputData(NodeConnectionTypes.AiTool, [
-					[{ json: { vectorQuery: vector, fullTextQuery: fullText } }],
+					[
+						{
+							json: {
+								vectorQuery: effectiveVectorQuery,
+								fullTextQuery: effectiveFullTextQuery,
+								topK: effectiveTopK,
+								partitionKeyField: effectivePartitionKeyField,
+								partitionKeyValue: effectivePartitionKeyValue,
+								additionalFilters: effectiveAdditionalFilters,
+								fieldsToReturn: effectiveFieldsToReturn,
+							},
+						},
+					],
 				]);
 
 				try {
+					if (!effectiveVectorQuery && !effectiveFullTextQuery) {
+						const errorMessage =
+							'Provide Vector Query and/or Full Text Query, or set one of them to Determine by AI model.';
+						context.addOutputData(NodeConnectionTypes.AiTool, index, [
+							[{ json: { error: errorMessage } }],
+						]);
+						return JSON.stringify({ error: errorMessage });
+					}
+
 					// Embed the semantic query; use fullText keywords for full-text scoring
-					const embedding = await embeddings.embedQuery(vector);
+					const embedding = await embeddings.embedQuery(effectiveVectorQuery);
 					const embeddingLiteral = `[${embedding.join(',')}]`;
 
-					const safeKeyword = fullText
+					const safeKeyword = effectiveFullTextQuery
 						.trim()
 						.split(/\s+/)
 						.filter(Boolean)
-						.map((word) => `'${word}'`)
+						.map((word) => `'${word.replace(/'/g, "''")}'`)
 						.join(',');
 
 					const conditions: string[] = [];
-					if (partitionKeyValue) {
-						conditions.push(`c.${partitionKeyField}='${partitionKeyValue.replace(/'/g, "''")}'`);
+					if (effectivePartitionKeyValue) {
+						conditions.push(
+							`c.${effectivePartitionKeyField}='${effectivePartitionKeyValue.replace(/'/g, "''")}'`,
+						);
 					}
-					if (additionalFilters) {
-						conditions.push(`(${additionalFilters})`);
+					if (effectiveAdditionalFilters) {
+						conditions.push(`(${effectiveAdditionalFilters})`);
 					}
 
 					let selectClause = '*';
-					if (fieldsToReturn) {
-						selectClause = fieldsToReturn
+					if (effectiveFieldsToReturn) {
+						selectClause = effectiveFieldsToReturn
 							.split(',')
 							.map((f) => {
 								const t = f.trim();
@@ -709,7 +1002,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 
 					const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
 					const sql =
-						`SELECT TOP ${topK} ${selectClause} FROM c${whereClause} ` +
+						`SELECT TOP ${effectiveTopK} ${selectClause} FROM c${whereClause} ` +
 						`ORDER BY RANK RRF(FullTextScore(c.${textFieldName}, ${safeKeyword}), ` +
 						`VectorDistance(c.${vectorFieldName}, ${embeddingLiteral}))`;
 
@@ -718,8 +1011,17 @@ export class CosmosDbHybridSearchTool implements INodeType {
 					if (!resources?.length) {
 						const noResult = JSON.stringify(
 							includeDebugInfo
-								? { message: 'No results found', vectorQuery: vector, fullTextQuery: fullText, sql }
-								: { message: 'No results found', vectorQuery: vector, fullTextQuery: fullText },
+								? {
+										message: 'No results found',
+										vectorQuery: effectiveVectorQuery,
+										fullTextQuery: effectiveFullTextQuery,
+										sql,
+									}
+								: {
+										message: 'No results found',
+										vectorQuery: effectiveVectorQuery,
+										fullTextQuery: effectiveFullTextQuery,
+									},
 						);
 						context.addOutputData(NodeConnectionTypes.AiTool, index, [
 							[{ json: { response: noResult } }],
@@ -730,7 +1032,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 					const reranked = await rerankDocuments(
 						resources as Array<Record<string, unknown>>,
 						reranker,
-						vector,
+						effectiveVectorQuery,
 						textFieldName,
 					);
 
@@ -740,8 +1042,8 @@ export class CosmosDbHybridSearchTool implements INodeType {
 							? {
 									results: cleaned,
 									debug: {
-										vectorQuery: vector,
-										fullTextQuery: fullText,
+										vectorQuery: effectiveVectorQuery,
+										fullTextQuery: effectiveFullTextQuery,
 										sql,
 										embeddingDimensions: embedding.length,
 										resultCount: cleaned.length,
@@ -774,30 +1076,70 @@ export class CosmosDbHybridSearchTool implements INodeType {
 	 */
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		// Support both new split-field schema { vector, fullText } and legacy { input }
-		const legacyInput = ((items[0]?.json?.input as string) || '').trim();
-		const vectorQuery = ((items[0]?.json?.vector as string) || legacyInput).trim();
-		const fullTextQuery = ((items[0]?.json?.fullText as string) || legacyInput).trim();
+		const inputJson = items[0]?.json ?? {};
+		const fromAiArguments = new Map<string, FromAIArgument>();
+		traverseNodeParametersWithParamNames(this.getNode().parameters, fromAiArguments);
+		const hasFromAiParameter = (parameterName: string): boolean => {
+			const argument = fromAiArguments.get(parameterName);
+			return Boolean(argument?.key?.trim());
+		};
+
+		const itemIndex = 0;
+		const nodeVectorQuery = toTrimmedString(
+			this.getNodeParameter('vectorQuery', itemIndex, ''),
+			'',
+		);
+		const nodeFullTextQuery = toTrimmedString(
+			this.getNodeParameter('fullTextQuery', itemIndex, ''),
+			'',
+		);
+
+		// Support split-field schemas and legacy { input }
+		const legacyInput = toTrimmedString(inputJson.input, '');
+		const rawInputVectorQuery = toTrimmedString(
+			inputJson.vectorQuery ?? inputJson.vector ?? legacyInput,
+			'',
+		);
+		const canOverrideVectorQueryFromAi = hasFromAiParameter('vectorQuery');
+		const canOverrideFullTextQueryFromAi = hasFromAiParameter('fullTextQuery');
+		const vectorQuery = toTrimmedString(
+			canOverrideVectorQueryFromAi ? rawInputVectorQuery || nodeVectorQuery : nodeVectorQuery,
+			'',
+		);
+		const fullTextQuery = toTrimmedString(
+			canOverrideFullTextQueryFromAi
+				? (inputJson.fullTextQuery ??
+						inputJson.fullText ??
+						legacyInput ??
+						nodeFullTextQuery ??
+						vectorQuery)
+				: nodeFullTextQuery || vectorQuery,
+			'',
+		);
 
 		if (!vectorQuery && !fullTextQuery) {
 			// Called during setup / configuration phase — no real query yet
 			return [[{ json: { output: 'No query provided' } }]];
 		}
 
-		const itemIndex = 0;
 		const authenticationType = this.getNodeParameter(
 			'authenticationType',
 			itemIndex,
 			'masterKey',
 		) as string;
-		const databaseName = (this.getNodeParameter('databaseName', itemIndex, '') as string).trim();
-		const containerName = (this.getNodeParameter('containerName', itemIndex, '') as string).trim();
-		const vectorFieldName = (
-			this.getNodeParameter('vectorFieldName', itemIndex, 'vector') as string
-		).trim();
-		const textFieldName = (
-			this.getNodeParameter('textFieldName', itemIndex, 'text') as string
-		).trim();
+		const databaseName = toTrimmedString(this.getNodeParameter('databaseName', itemIndex, ''), '');
+		const containerName = toTrimmedString(
+			this.getNodeParameter('containerName', itemIndex, ''),
+			'',
+		);
+		const vectorFieldName = toTrimmedString(
+			this.getNodeParameter('vectorFieldName', itemIndex, 'vector'),
+			'',
+		);
+		const textFieldName = toTrimmedString(
+			this.getNodeParameter('textFieldName', itemIndex, 'text'),
+			'',
+		);
 		const topK = this.getNodeParameter('topK', itemIndex, 10) as number;
 		const options = this.getNodeParameter('options', itemIndex, {}) as Record<string, unknown>;
 
@@ -805,6 +1147,38 @@ export class CosmosDbHybridSearchTool implements INodeType {
 		const partitionKeyValue = ((options.partitionKeyValue as string) || '').trim();
 		const additionalFilters = ((options.additionalFilters as string) || '').trim();
 		const fieldsToReturn = ((options.fieldsToReturn as string) || '').trim();
+		const canOverrideTopKFromAi = hasFromAiParameter('topK');
+		const canOverridePartitionKeyFieldFromAi =
+			hasFromAiParameter('partitionKeyField') || hasFromAiParameter('options.partitionKeyField');
+		const canOverridePartitionKeyValueFromAi =
+			hasFromAiParameter('partitionKeyValue') || hasFromAiParameter('options.partitionKeyValue');
+		const canOverrideAdditionalFiltersFromAi =
+			hasFromAiParameter('additionalFilters') || hasFromAiParameter('options.additionalFilters');
+		const canOverrideFieldsToReturnFromAi =
+			hasFromAiParameter('fieldsToReturn') || hasFromAiParameter('options.fieldsToReturn');
+		const inputTopK = Number(inputJson.topK);
+		const effectiveTopK =
+			canOverrideTopKFromAi && Number.isFinite(inputTopK) && inputTopK > 0 ? inputTopK : topK;
+		const effectivePartitionKeyField = String(
+			canOverridePartitionKeyFieldFromAi
+				? (inputJson.partitionKeyField ?? partitionKeyField)
+				: partitionKeyField,
+		).trim();
+		const effectivePartitionKeyValue = String(
+			canOverridePartitionKeyValueFromAi
+				? (inputJson.partitionKeyValue ?? partitionKeyValue)
+				: partitionKeyValue,
+		).trim();
+		const effectiveAdditionalFilters = String(
+			canOverrideAdditionalFiltersFromAi
+				? (inputJson.additionalFilters ?? additionalFilters)
+				: additionalFilters,
+		).trim();
+		const effectiveFieldsToReturn = String(
+			canOverrideFieldsToReturnFromAi
+				? (inputJson.fieldsToReturn ?? fieldsToReturn)
+				: fieldsToReturn,
+		).trim();
 		const simplifyOutput = options.simplifyOutput !== false;
 		const excludeFieldsStr =
 			(this.getNodeParameter('fieldsToExclude', itemIndex, 'vector,text') as string).trim() ||
@@ -886,16 +1260,18 @@ export class CosmosDbHybridSearchTool implements INodeType {
 				.join(',');
 
 			const conditions: string[] = [];
-			if (partitionKeyValue) {
-				conditions.push(`c.${partitionKeyField}='${partitionKeyValue.replace(/'/g, "''")}'`);
+			if (effectivePartitionKeyValue) {
+				conditions.push(
+					`c.${effectivePartitionKeyField}='${effectivePartitionKeyValue.replace(/'/g, "''")}'`,
+				);
 			}
-			if (additionalFilters) {
-				conditions.push(`(${additionalFilters})`);
+			if (effectiveAdditionalFilters) {
+				conditions.push(`(${effectiveAdditionalFilters})`);
 			}
 
 			let selectClause = '*';
-			if (fieldsToReturn) {
-				selectClause = fieldsToReturn
+			if (effectiveFieldsToReturn) {
+				selectClause = effectiveFieldsToReturn
 					.split(',')
 					.map((f) => {
 						const t = f.trim();
@@ -906,7 +1282,7 @@ export class CosmosDbHybridSearchTool implements INodeType {
 
 			const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
 			const sql =
-				`SELECT TOP ${topK} ${selectClause} FROM c${whereClause} ` +
+				`SELECT TOP ${effectiveTopK} ${selectClause} FROM c${whereClause} ` +
 				`ORDER BY RANK RRF(FullTextScore(c.${textFieldName}, ${safeKeyword}), ` +
 				`VectorDistance(c.${vectorFieldName}, ${embeddingLiteral}))`;
 

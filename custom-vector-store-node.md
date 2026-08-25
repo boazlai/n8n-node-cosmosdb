@@ -228,7 +228,7 @@ docker cp dist/nodes/CosmosDb/CosmosDbHybridSearchTool.node.js \
     n8n:/home/node/.n8n/custom/node_modules/n8n-nodes-cosmosdb/dist/nodes/CosmosDb/CosmosDbHybridSearchTool.node.js
 
 # 3. Restart n8n
-cd /home/boaz_lai/prj/n8n && docker compose -f docker-compose.wsl.yml restart n8n
+cd /home/boaz_lai/prj/n8n && docker compose -f docker-compose.yml restart n8n
 
 # 4. Verify clean startup (no execute/supplyData errors for our node)
 docker logs n8n --since 1m 2>&1 | grep -E "ready|Error|cosmosDb"

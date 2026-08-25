@@ -21,10 +21,10 @@ Connect Azure Cosmos DB to your n8n workflows with advanced search capabilities 
 This package currently ships three n8n nodes:
 
 - **Cosmos DB** - Main operational node for document CRUD, SQL queries, container management, and hybrid search inside regular workflows
-- **Cosmos DB Tool** - AI tool node for agent-driven Cosmos DB retrieval patterns
+- **Cosmos DB Tool** - AI tool node for agent-driven SQL select retrieval
 - **Cosmos DB Hybrid Search Tool** - Dedicated AI tool node focused on hybrid retrieval with separate semantic vector input and full-text keyword input
 
-Use the dedicated **Cosmos DB Hybrid Search Tool** when you want an AI Agent to call a purpose-built hybrid retrieval tool instead of routing through the broader multi-operation node.
+Use the dedicated **Cosmos DB Hybrid Search Tool** when you want an AI Agent to call a purpose-built hybrid retrieval tool.
 
 ## What You Can Do
 
@@ -63,7 +63,7 @@ npm install n8n-nodes-cosmosdb
    - Search for "Cosmos DB" in the n8n node panel
    - Choose the node that matches your workflow:
      - `Cosmos DB` for standard database operations and regular n8n flows
-     - `Cosmos DB Tool` for agent tool usage across multiple retrieval patterns
+     - `Cosmos DB Tool` for agent SQL select retrieval
      - `Cosmos DB Hybrid Search Tool` for a dedicated AI hybrid-search tool
 
 3. **(Optional) Connect an Embedding Model**:

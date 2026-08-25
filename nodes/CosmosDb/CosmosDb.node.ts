@@ -18,6 +18,29 @@ interface ICosmosTokenData {
 	expiresAt?: string;
 }
 
+function parseTokenExpiryMs(tokenData?: Record<string, unknown>): number | undefined {
+	if (!tokenData) {
+		return undefined;
+	}
+
+	const rawExpiry = tokenData.expires_at ?? tokenData.expires_on ?? tokenData.expiry_date;
+	if (rawExpiry === undefined || rawExpiry === null) {
+		return undefined;
+	}
+
+	if (typeof rawExpiry === 'number' && Number.isFinite(rawExpiry)) {
+		return rawExpiry > 1_000_000_000_000 ? rawExpiry : rawExpiry * 1000;
+	}
+
+	const numericExpiry = Number(rawExpiry);
+	if (Number.isFinite(numericExpiry)) {
+		return numericExpiry > 1_000_000_000_000 ? numericExpiry : numericExpiry * 1000;
+	}
+
+	const dateExpiry = Date.parse(String(rawExpiry));
+	return Number.isNaN(dateExpiry) ? undefined : dateExpiry;
+}
+
 class N8nCosmosTokenCredential implements TokenCredential {
 	private readonly tokenSupplier: () => Promise<ICosmosTokenData>;
 
@@ -52,12 +75,51 @@ function createEntraIdCosmosTokenCredential(
 	context: {
 		getCredentials(name: string): Promise<IDataObject>;
 		getNode(): any;
+		helpers?: {
+			requestWithAuthentication?: (
+				credentialsType: string,
+				requestOptions: IDataObject,
+				additionalData?: IDataObject,
+			) => Promise<unknown>;
+		};
 	},
 	missingTokenMessage = 'No valid Entra ID access token found.',
 ): N8nCosmosTokenCredential {
 	return new N8nCosmosTokenCredential(async () => {
-		const refreshedCredentials = await context.getCredentials('cosmosDbEntraIdApi');
-		const refreshedTokenData = refreshedCredentials.oauthTokenData as Record<string, unknown>;
+		let refreshedCredentials = await context.getCredentials('cosmosDbEntraIdApi');
+		let refreshedTokenData = refreshedCredentials.oauthTokenData as Record<string, unknown>;
+
+		const refreshBeforeExpirySeconds = Math.max(
+			60,
+			Number(refreshedCredentials.refreshBeforeExpirySeconds ?? 900) || 900,
+		);
+		const expiresOnMs = parseTokenExpiryMs(refreshedTokenData);
+		const shouldRefresh =
+			typeof expiresOnMs === 'number' &&
+			expiresOnMs - Date.now() <= refreshBeforeExpirySeconds * 1000;
+
+		if (shouldRefresh && context.helpers?.requestWithAuthentication) {
+			const endpoint = String(refreshedCredentials.endpoint ?? '').trim();
+			if (endpoint) {
+				try {
+					await context.helpers.requestWithAuthentication(
+						'cosmosDbEntraIdApi',
+						{
+							method: 'GET',
+							url: endpoint,
+							timeout: 10000,
+							json: false,
+						},
+						{},
+					);
+				} catch {
+					// Ignore network/auth response errors here; refresh may still have been performed.
+				}
+
+				refreshedCredentials = await context.getCredentials('cosmosDbEntraIdApi');
+				refreshedTokenData = refreshedCredentials.oauthTokenData as Record<string, unknown>;
+			}
+		}
 
 		if (!refreshedTokenData?.access_token) {
 			throw new NodeOperationError(context.getNode(), missingTokenMessage);
@@ -1440,7 +1502,7 @@ export class CosmosDb implements INodeType {
 				default: '',
 				placeholder: 'Enter full-text search keywords',
 				description:
-					'Keywords for full-text search. When used as an AI tool, the agent will fill this automatically.',
+					'Keywords for full-text search. Click Determine by AI model only when the AI Agent should provide this value.',
 				displayOptions: {
 					show: {
 						operation: ['hybridSearch'],
@@ -1454,7 +1516,7 @@ export class CosmosDb implements INodeType {
 				default: '',
 				placeholder: 'Enter semantic search query',
 				description:
-					'Query text for vector embedding search (used in VectorDistance). When used as an AI tool, the agent will fill this automatically.',
+					'Query text for vector embedding search (used in VectorDistance). Click Determine by AI model only when the AI Agent should provide this value.',
 				displayOptions: {
 					show: {
 						operation: ['hybridSearch'],
