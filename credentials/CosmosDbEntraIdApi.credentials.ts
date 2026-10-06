@@ -6,54 +6,33 @@ export class CosmosDbEntraIdApi implements ICredentialType {
 	documentationUrl = 'https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-setup-rbac';
 	extends = ['microsoftOAuth2Api'];
 	properties: INodeProperties[] = [
-		// Override inherited OAuth2 properties to hide them
+		// Hidden OAuth2 config fields with noDataExpression to prevent URL bloat (431 errors)
 		{
-			displayName: 'OAuth Redirect URL',
-			name: 'oauthCallbackUrl',
+			displayName: 'Grant Type',
+			name: 'grantType',
 			type: 'hidden',
-			default: '',
+			default: 'authorizationCode',
 			noDataExpression: true,
 		},
 		{
 			displayName: 'Authorization URL',
 			name: 'authUrl',
 			type: 'hidden',
-			default: '',
+			default: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
 			noDataExpression: true,
 		},
 		{
 			displayName: 'Access Token URL',
 			name: 'accessTokenUrl',
 			type: 'hidden',
-			default: '',
+			default: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
 			noDataExpression: true,
 		},
 		{
-			displayName: 'Client ID',
-			name: 'clientId',
+			displayName: 'Authentication',
+			name: 'authentication',
 			type: 'hidden',
-			default: '', // Will be populated by N8N_OAUTH2_MICROSOFT_CLIENT_ID env var
-			noDataExpression: true,
-		},
-		{
-			displayName: 'Client Secret',
-			name: 'clientSecret',
-			type: 'hidden',
-			default: '', // Will be populated by N8N_OAUTH2_MICROSOFT_CLIENT_SECRET env var
-			noDataExpression: true,
-		},
-		{
-			displayName: 'Allowed HTTP Request Domains',
-			name: 'allowedDomains',
-			type: 'hidden',
-			default: 'All',
-			noDataExpression: true,
-		},
-		{
-			displayName: 'Microsoft Graph API Base URL',
-			name: 'graphApiBaseUrl',
-			type: 'hidden',
-			default: 'Global (https://graph.microsoft.com)',
+			default: 'body',
 			noDataExpression: true,
 		},
 		{
