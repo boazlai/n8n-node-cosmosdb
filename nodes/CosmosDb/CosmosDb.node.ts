@@ -290,7 +290,9 @@ export class CosmosDb implements INodeType {
 				const op = $parameter.operation;
 				const res = $parameter.resource;
 				const result = ['main'];
-				if (res === 'item' && (op === 'upsert' || op === 'hybridSearch' || op === 'documentIndex')) {
+				const needsEmbeddings =
+					op === 'hybridSearch' || op === 'documentIndex' || (op === 'upsert' && $parameter.addEmbedding === true);
+				if (res === 'item' && needsEmbeddings) {
 					result.push({ displayName: 'Embeddings', type: 'ai_embedding', required: op === 'documentIndex', maxConnections: 1 });
 				}
 				if (res === 'item' && op === 'hybridSearch') {

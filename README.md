@@ -70,6 +70,7 @@ npm install n8n-nodes-cosmosdb
    - Add an OpenAI Embeddings node (or Azure OpenAI, etc.)
    - Connect it to the "Embedding" input of the Cosmos DB node
    - Required for Hybrid Search and automatic embedding generation
+   - The input is only shown for Hybrid Search, Document Index, and for Create or Update once **Add Embedding** is enabled
 
 ## Operations Guide
 
@@ -99,7 +100,7 @@ Insert new documents or update existing ones with automatic embedding generation
 **What you can do:**
 
 - Upsert documents using JSON input (requires `id` and partition key)
-- Automatically generate AI embeddings when connected to an embedding model
+- Enable **Add Embedding** to reveal the Embedding input and automatically generate AI embeddings for each document
 - Process multiple documents efficiently with batch embedding support
 - Add custom text fields and metadata to documents
 
